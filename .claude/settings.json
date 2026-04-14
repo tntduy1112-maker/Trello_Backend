@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//usr/**)",
+      "Bash(echo \"PID: $!\")",
+      "Bash(pkill -f \"vite\")",
+      "Bash(npm run:*)",
+      "Bash(pkill -f vite)",
+      "Bash(echo \"Started PID: $!\")"
+    ],
+    "additionalDirectories": [
+      "/private/tmp"
+    ]
+  }
+}

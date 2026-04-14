@@ -1,11 +1,23 @@
 const env = require('./configs/env');
 const express = require('express');
+const cors = require('cors');
 const authRouter = require('./modules/auth/auth.route');
 const orgRouter = require('./modules/organizations/organizations.route');
 const { orgBoardsRouter, boardRouter } = require('./modules/boards/boards.route');
+const { boardListsRouter, listRouter } = require('./modules/lists/lists.route');
+const { listCardsRouter, cardRouter } = require('./modules/cards/cards.route');
 const { error } = require('./utils/response');
 
 const app = express();
+
+app.use(cors({
+  origin: [
+    'http://localhost:5173',
+    'http://localhost:3000',
+    ...(env.CORS_ORIGINS ? env.CORS_ORIGINS.split(',').map(o => o.trim()) : []),
+  ],
+  credentials: true,
+}));
 
 app.use(express.json());
 
@@ -23,6 +35,10 @@ app.use('/api/v1/auth', authRouter);
 app.use('/api/v1/organizations', orgRouter);
 app.use('/api/v1/organizations/:orgId/boards', orgBoardsRouter);
 app.use('/api/v1/boards/:boardId', boardRouter);
+app.use('/api/v1/boards/:boardId/lists', boardListsRouter);
+app.use('/api/v1/lists/:listId/cards', listCardsRouter);
+app.use('/api/v1/lists/:listId', listRouter);
+app.use('/api/v1/cards/:cardId', cardRouter);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', env: env.NODE_ENV });
