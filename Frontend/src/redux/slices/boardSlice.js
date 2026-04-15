@@ -1,7 +1,7 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit'
 import { getBoard } from '../../services/board.service'
 import { getLists, createList } from '../../services/list.service'
-import { getCards, createCard, updateCard as updateCardApi, deleteCard as deleteCardApi } from '../../services/card.service'
+import { getCards, createCard, updateCard as updateCardApi, deleteCard as deleteCardApi, getComments as getCommentsApi, addComment as addCommentApi, updateComment as updateCommentApi, deleteComment as deleteCommentApi } from '../../services/card.service'
 import {
   getBoardLabels,
   createLabel as createLabelApi,
@@ -10,6 +10,7 @@ import {
   addCardLabel as addCardLabelApi,
   removeCardLabel as removeCardLabelApi,
 } from '../../services/label.service'
+import { getCardActivity as getCardActivityApi } from '../../services/activityLog.service'
 
 export const fetchBoard = createAsyncThunk(
   'board/fetchBoard',
@@ -172,6 +173,68 @@ export const removeCardLabelThunk = createAsyncThunk(
   }
 )
 
+// ── Comments ──────────────────────────────────────────────────────────────────
+
+export const fetchCardComments = createAsyncThunk(
+  'board/fetchCardComments',
+  async (cardId, { rejectWithValue }) => {
+    try {
+      const res = await getCommentsApi(cardId)
+      return res.data.data.comments
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to load comments')
+    }
+  }
+)
+
+export const addCommentThunk = createAsyncThunk(
+  'board/addComment',
+  async ({ cardId, content, parentId = null }, { rejectWithValue }) => {
+    try {
+      const res = await addCommentApi(cardId, { content, parentId })
+      return { comment: res.data.data.comment, parentId }
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to add comment')
+    }
+  }
+)
+
+export const editCommentThunk = createAsyncThunk(
+  'board/editComment',
+  async ({ commentId, content, parentId = null }, { rejectWithValue }) => {
+    try {
+      const res = await updateCommentApi(commentId, { content })
+      return { comment: res.data.data.comment, parentId }
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to edit comment')
+    }
+  }
+)
+
+export const deleteCommentThunk = createAsyncThunk(
+  'board/deleteComment',
+  async ({ commentId, parentId = null }, { rejectWithValue }) => {
+    try {
+      await deleteCommentApi(commentId)
+      return { commentId, parentId }
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to delete comment')
+    }
+  }
+)
+
+export const fetchCardActivity = createAsyncThunk(
+  'board/fetchCardActivity',
+  async (cardId, { rejectWithValue }) => {
+    try {
+      const res = await getCardActivityApi(cardId)
+      return res.data.data.logs
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to load activity')
+    }
+  }
+)
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 const initialState = {
@@ -180,8 +243,12 @@ const initialState = {
   lists: [],
   cards: {},
   boardLabels: [],
+  cardComments: [],
+  cardActivity: [],
   loadingBoard: false,
   loadingLists: false,
+  loadingComments: false,
+  loadingActivity: false,
 }
 
 const boardSlice = createSlice({
@@ -350,6 +417,64 @@ const boardSlice = createSlice({
           const card = state.cards[listId].find((c) => c.id === cardId)
           if (card) card.labels = labels
         }
+      })
+      // Comments
+      .addCase(fetchCardComments.pending, (state) => {
+        state.loadingComments = true
+      })
+      .addCase(fetchCardComments.fulfilled, (state, action) => {
+        state.loadingComments = false
+        state.cardComments = action.payload
+      })
+      .addCase(fetchCardComments.rejected, (state) => {
+        state.loadingComments = false
+        state.cardComments = []
+      })
+      .addCase(addCommentThunk.fulfilled, (state, action) => {
+        const { comment, parentId } = action.payload
+        if (parentId) {
+          const parent = state.cardComments.find((c) => c.id === parentId)
+          if (parent) {
+            if (!Array.isArray(parent.replies)) parent.replies = []
+            parent.replies.push(comment)
+          }
+        } else {
+          state.cardComments.push({ ...comment, replies: [] })
+        }
+      })
+      .addCase(editCommentThunk.fulfilled, (state, action) => {
+        const { comment, parentId } = action.payload
+        if (parentId) {
+          const parent = state.cardComments.find((c) => c.id === parentId)
+          if (parent) {
+            const idx = (parent.replies || []).findIndex((r) => r.id === comment.id)
+            if (idx !== -1) parent.replies[idx] = { ...parent.replies[idx], ...comment }
+          }
+        } else {
+          const idx = state.cardComments.findIndex((c) => c.id === comment.id)
+          if (idx !== -1) state.cardComments[idx] = { ...state.cardComments[idx], ...comment }
+        }
+      })
+      .addCase(deleteCommentThunk.fulfilled, (state, action) => {
+        const { commentId, parentId } = action.payload
+        if (parentId) {
+          const parent = state.cardComments.find((c) => c.id === parentId)
+          if (parent) parent.replies = (parent.replies || []).filter((r) => r.id !== commentId)
+        } else {
+          state.cardComments = state.cardComments.filter((c) => c.id !== commentId)
+        }
+      })
+      // Activity
+      .addCase(fetchCardActivity.pending, (state) => {
+        state.loadingActivity = true
+      })
+      .addCase(fetchCardActivity.fulfilled, (state, action) => {
+        state.loadingActivity = false
+        state.cardActivity = action.payload
+      })
+      .addCase(fetchCardActivity.rejected, (state) => {
+        state.loadingActivity = false
+        state.cardActivity = []
       })
   },
 })

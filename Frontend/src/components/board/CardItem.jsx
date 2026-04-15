@@ -1,7 +1,7 @@
 import React from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { AlignLeft, Calendar, AlertCircle, CheckSquare, Paperclip } from 'lucide-react'
+import { AlignLeft, Calendar, AlertCircle, CheckSquare, Paperclip, Check } from 'lucide-react'
 import { formatDate, isOverdue, isDueSoon } from '../../utils/helpers'
 import { PRIORITY_COLOR } from '../../data/constants'
 import Avatar from '../ui/Avatar'
@@ -34,7 +34,11 @@ export default function CardItem({ card, listId, onClick }) {
       {...attributes}
       {...listeners}
       onClick={onClick}
-      className="group bg-[#22272B] rounded-xl border border-[#2C333A] hover:border-[#454F59] cursor-pointer transition-all hover:shadow-lg active:opacity-80 overflow-hidden"
+      className={`group bg-[#22272B] rounded-xl border cursor-pointer transition-all hover:shadow-lg active:opacity-80 overflow-hidden ${
+        card.is_completed
+          ? 'border-green-800/60 hover:border-green-700'
+          : 'border-[#2C333A] hover:border-[#454F59]'
+      }`}
     >
       {/* Cover */}
       {card.cover_color && (
@@ -57,12 +61,24 @@ export default function CardItem({ card, listId, onClick }) {
         )}
 
         {/* Title */}
-        <p className="text-sm text-[#B6C2CF] group-hover:text-white transition-colors leading-snug mb-2">
+        <p className={`text-sm leading-snug mb-2 transition-colors ${
+          card.is_completed
+            ? 'line-through text-[#596773]'
+            : 'text-[#B6C2CF] group-hover:text-white'
+        }`}>
           {card.title}
         </p>
 
         {/* Metadata row */}
         <div className="flex flex-wrap items-center gap-2 mt-2">
+          {/* Completed badge */}
+          {card.is_completed && (
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-900/50 text-green-400">
+              <Check size={9} />
+              Xong
+            </span>
+          )}
+
           {/* Priority */}
           {card.priority && (
             <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium text-white ${priorityColor}`}>

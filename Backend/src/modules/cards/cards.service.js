@@ -1,6 +1,7 @@
 const model = require('./cards.model');
 const listModel = require('../lists/lists.model');
 const boardModel = require('../boards/boards.model');
+const { logActivity } = require('../../utils/activityLogger');
 
 const assertBoardAccess = async (userId, boardId) => {
   const board = await boardModel.findBoardById(boardId);
@@ -31,6 +32,7 @@ const createCard = async (userId, listId, { title }) => {
   await assertBoardAccess(userId, list.board_id);
   const maxPos = await model.getMaxPosition(listId);
   const card = await model.createCard(listId, list.board_id, title, maxPos + 1, userId);
+  logActivity({ userId, entityType: 'card', entityId: card.id, boardId: list.board_id, action: 'card.created', metadata: { title: card.title } });
   // Return with empty assignees array
   return { ...card, assignees: [] };
 };
@@ -60,8 +62,29 @@ const updateCard = async (userId, cardId, fields) => {
     }
   }
 
+  // Build change log before writing
+  const FIELD_LABEL = {
+    title: 'title', description: 'description', priority: 'priority',
+    due_date: 'dueDate', is_archived: 'archived', is_completed: 'completed',
+    cover_color: 'coverColor', list_id: 'list',
+  };
+  const changes = [];
+  for (const [dbKey, label] of Object.entries(FIELD_LABEL)) {
+    if (dbKey in allowed && String(allowed[dbKey]) !== String(card[dbKey])) {
+      changes.push({ field: label, oldValue: card[dbKey], newValue: allowed[dbKey] });
+    }
+  }
+  if ('assigneeId' in fields) {
+    const oldAssignee = Array.isArray(card.assignees) ? (card.assignees[0]?.full_name || null) : null;
+    changes.push({ field: 'assignee', oldValue: oldAssignee, newValue: fields.assigneeId || null });
+  }
+
   if (Object.keys(allowed).length > 0) {
     await model.updateCard(cardId, allowed);
+  }
+
+  if (changes.length > 0) {
+    logActivity({ userId, entityType: 'card', entityId: cardId, boardId: list.board_id, action: 'card.updated', metadata: { changes } });
   }
 
   return model.findCardById(cardId);
@@ -72,6 +95,7 @@ const deleteCard = async (userId, cardId) => {
   if (!card) { const e = new Error('Card not found'); e.statusCode = 404; throw e; }
   const list = await listModel.findListById(card.list_id);
   await assertBoardAccess(userId, list.board_id);
+  logActivity({ userId, entityType: 'card', entityId: cardId, boardId: list.board_id, action: 'card.deleted', metadata: { title: card.title } });
   await model.deleteCard(cardId);
 };
 

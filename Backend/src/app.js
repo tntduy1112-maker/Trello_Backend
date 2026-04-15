@@ -7,6 +7,8 @@ const { orgBoardsRouter, boardRouter } = require('./modules/boards/boards.route'
 const { boardListsRouter, listRouter } = require('./modules/lists/lists.route');
 const { listCardsRouter, cardRouter } = require('./modules/cards/cards.route');
 const { boardLabelsRouter, labelRouter, cardLabelsRouter } = require('./modules/labels/labels.route');
+const { boardActivityRouter, cardActivityRouter } = require('./modules/activityLogs/activityLogs.route');
+const { cardCommentsRouter, commentRouter } = require('./modules/comments/comments.route');
 const { error } = require('./utils/response');
 
 const app = express();
@@ -43,6 +45,10 @@ app.use('/api/v1/cards/:cardId', cardRouter);
 app.use('/api/v1/boards/:boardId/labels', boardLabelsRouter);
 app.use('/api/v1/cards/:cardId/labels', cardLabelsRouter);
 app.use('/api/v1/labels/:labelId', labelRouter);
+app.use('/api/v1/boards/:boardId/activity', boardActivityRouter);
+app.use('/api/v1/cards/:cardId/activity', cardActivityRouter);
+app.use('/api/v1/cards/:cardId/comments', cardCommentsRouter);
+app.use('/api/v1/comments/:commentId', commentRouter);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', env: env.NODE_ENV });

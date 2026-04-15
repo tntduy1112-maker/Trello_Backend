@@ -3,12 +3,14 @@ import { useDispatch, useSelector } from 'react-redux'
 import {
   X, AlignLeft, CheckSquare, MessageSquare,
   Archive, Trash2, Plus, Check,
-  Edit3, UserX, Tag, Pencil,
+  Edit3, UserX, Tag, Pencil, Activity,
 } from 'lucide-react'
 import {
   updateCard, saveCardThunk, deleteCardThunk,
   addCardLabelThunk, removeCardLabelThunk,
   createLabelThunk, updateLabelThunk, deleteLabelThunk,
+  fetchCardActivity, fetchCardComments,
+  addCommentThunk, editCommentThunk, deleteCommentThunk,
 } from '../../redux/slices/boardSlice'
 import { formatDate, formatRelativeTime, isOverdue } from '../../utils/helpers'
 import { PRIORITY_COLOR } from '../../data/constants'
@@ -28,11 +30,34 @@ const LABEL_COLORS = [
   '#FF78CB', '#344563',
 ]
 
+const ACTION_LABEL = {
+  'card.created': (m) => `đã tạo card "${m?.title || ''}"`,
+  'card.deleted': (m) => `đã xóa card "${m?.title || ''}"`,
+  'card.updated': (m) => {
+    const changes = m?.changes || []
+    if (changes.length === 0) return 'đã cập nhật card'
+    const FIELD_VI = { title: 'tiêu đề', description: 'mô tả', priority: 'độ ưu tiên', dueDate: 'hạn', archived: 'lưu trữ', completed: 'hoàn thành', coverColor: 'màu bìa', assignee: 'thành viên' }
+    if (changes.length === 1) return `đã cập nhật ${FIELD_VI[changes[0].field] || changes[0].field}`
+    return `đã cập nhật ${changes.length} trường`
+  },
+  'list.created': (m) => `đã tạo danh sách "${m?.name || ''}"`,
+  'list.deleted': (m) => `đã xóa danh sách "${m?.name || ''}"`,
+}
+
+const getActionLabel = (log) => {
+  const fn = ACTION_LABEL[log.action]
+  return fn ? fn(log.metadata) : log.action
+}
+
 export default function CardDetailModal({ card, listId, isOpen, onClose, boardMembers = [] }) {
   const dispatch = useDispatch()
   const { user: currentUser } = useSelector((state) => state.auth)
   const boardLabels = useSelector((state) => state.board.boardLabels)
   const currentBoard = useSelector((state) => state.board.currentBoard)
+  const cardActivity = useSelector((state) => state.board.cardActivity)
+  const loadingActivity = useSelector((state) => state.board.loadingActivity)
+  const cardComments = useSelector((state) => state.board.cardComments)
+  const loadingComments = useSelector((state) => state.board.loadingComments)
 
   // Derive up-to-date labels from the Redux store so they reflect toggle changes instantly
   const cardInStore = useSelector((state) => {
@@ -41,14 +66,23 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
   })
   const cardLabels = (cardInStore || card)?.labels || []
 
+  const [activeTab, setActiveTab] = useState('comments')
+
   const [editingTitle, setEditingTitle] = useState(false)
   const [title, setTitle] = useState(card?.title || '')
   const [editingDesc, setEditingDesc] = useState(false)
   const [description, setDescription] = useState(card?.description || '')
   const [comment, setComment] = useState('')
+  const [submittingComment, setSubmittingComment] = useState(false)
+  const [replyingTo, setReplyingTo] = useState(null)   // commentId | null
+  const [replyText, setReplyText] = useState('')
+  const [submittingReply, setSubmittingReply] = useState(false)
+  const [editingComment, setEditingComment] = useState(null) // { id, content, parentId }
+  const [savingEdit, setSavingEdit] = useState(false)
   const [priority, setPriority] = useState(card?.priority || 'medium')
   const [dueDate, setDueDate] = useState(card?.due_date || '')
-  const [comments, setComments] = useState(card?.comments || [])
+  const [isCompleted, setIsCompleted] = useState(card?.is_completed || false)
+  const [completing, setCompleting] = useState(false)
 
   // Single assignee
   const [assignee, setAssignee] = useState(card?.assignees?.[0] || null)
@@ -69,6 +103,14 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
   const [togglingLabelId, setTogglingLabelId] = useState(null)
   const [labelError, setLabelError] = useState('')
   const labelPickerRef = useRef(null)
+
+  // Fetch comments + activity when modal opens
+  useEffect(() => {
+    if (isOpen && card?.id) {
+      dispatch(fetchCardComments(card.id))
+      dispatch(fetchCardActivity(card.id))
+    }
+  }, [isOpen, card?.id, dispatch])
 
   // Close pickers when clicking outside
   useEffect(() => {
@@ -107,16 +149,46 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
     setShowMemberPicker(false)
   }
 
-  const handleAddComment = () => {
-    if (!comment.trim()) return
-    const newComment = {
-      id: `cm-${Date.now()}`,
-      user: currentUser || { full_name: 'Bạn', avatar_url: null },
-      content: comment.trim(),
-      created_at: new Date(),
+  const handleAddComment = async () => {
+    if (!comment.trim() || submittingComment) return
+    setSubmittingComment(true)
+    try {
+      await dispatch(addCommentThunk({ cardId: card.id, content: comment.trim() })).unwrap()
+      setComment('')
+    } finally {
+      setSubmittingComment(false)
     }
-    setComments((c) => [...c, newComment])
-    setComment('')
+  }
+
+  const handleAddReply = async (parentId) => {
+    if (!replyText.trim() || submittingReply) return
+    setSubmittingReply(true)
+    try {
+      await dispatch(addCommentThunk({ cardId: card.id, content: replyText.trim(), parentId })).unwrap()
+      setReplyText('')
+      setReplyingTo(null)
+    } finally {
+      setSubmittingReply(false)
+    }
+  }
+
+  const handleSaveEdit = async () => {
+    if (!editingComment || !editingComment.content.trim() || savingEdit) return
+    setSavingEdit(true)
+    try {
+      await dispatch(editCommentThunk({
+        commentId: editingComment.id,
+        content: editingComment.content.trim(),
+        parentId: editingComment.parentId,
+      })).unwrap()
+      setEditingComment(null)
+    } finally {
+      setSavingEdit(false)
+    }
+  }
+
+  const handleDeleteComment = (commentId, parentId = null) => {
+    dispatch(deleteCommentThunk({ commentId, parentId }))
   }
 
   const handleChangePriority = (p) => {
@@ -127,6 +199,23 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
   const handleChangeDueDate = (d) => {
     setDueDate(d)
     dispatch(updateCard({ listId, cardId: card.id, updates: { due_date: d } }))
+  }
+
+  const handleToggleComplete = async () => {
+    const newValue = !isCompleted
+    setIsCompleted(newValue)
+    setCompleting(true)
+    try {
+      await dispatch(saveCardThunk({
+        cardId: card.id,
+        listId,
+        data: { isCompleted: newValue },
+      })).unwrap()
+    } catch {
+      setIsCompleted(!newValue)
+    } finally {
+      setCompleting(false)
+    }
   }
 
   const handleSaveCard = async () => {
@@ -147,6 +236,7 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
           priority,
           dueDate: dueDate || null,
           assigneeId: assignee?.user_id || null,
+          isCompleted,
         },
       })).unwrap()
       onClose()
@@ -286,7 +376,9 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
               ) : (
                 <h2
                   onClick={() => setEditingTitle(true)}
-                  className="text-xl font-bold text-white cursor-text hover:bg-[#2C333A] rounded-xl px-3 py-2 -ml-3 transition-colors"
+                  className={`text-xl font-bold cursor-text hover:bg-[#2C333A] rounded-xl px-3 py-2 -ml-3 transition-colors ${
+                    isCompleted ? 'line-through text-[#596773]' : 'text-white'
+                  }`}
                 >
                   {title || card.title}
                 </h2>
@@ -368,52 +460,249 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
               </div>
             )}
 
-            {/* Comments */}
+            {/* Comments / Activity tabs */}
             <div>
-              <div className="flex items-center gap-2 mb-3">
-                <MessageSquare size={16} className="text-[#8C9BAB]" />
-                <h3 className="text-sm font-semibold text-[#B6C2CF]">Bình luận</h3>
+              {/* Tab switcher */}
+              <div className="flex items-center gap-1 mb-3">
+                <button
+                  onClick={() => setActiveTab('comments')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    activeTab === 'comments' ? 'bg-[#2C333A] text-white' : 'text-[#8C9BAB] hover:text-[#B6C2CF]'
+                  }`}
+                >
+                  <MessageSquare size={13} />
+                  Bình luận
+                </button>
+                <button
+                  onClick={() => setActiveTab('activity')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    activeTab === 'activity' ? 'bg-[#2C333A] text-white' : 'text-[#8C9BAB] hover:text-[#B6C2CF]'
+                  }`}
+                >
+                  <Activity size={13} />
+                  Hoạt động
+                </button>
               </div>
 
-              <div className="flex gap-3 mb-4">
-                <Avatar src={currentUser?.avatar_url} name={currentUser?.full_name || 'Bạn'} size="sm" className="flex-shrink-0 mt-0.5" />
-                <div className="flex-1">
-                  <textarea
-                    value={comment}
-                    onChange={(e) => setComment(e.target.value)}
-                    placeholder="Viết bình luận..."
-                    rows={2}
-                    className="w-full px-3 py-2 bg-[#22272B] border border-[#454F59] rounded-xl text-[#B6C2CF] placeholder-[#596773] text-sm resize-none focus:outline-none focus:ring-2 focus:ring-[#0C66E4]"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleAddComment()
-                    }}
-                  />
-                  <button
-                    onClick={handleAddComment}
-                    disabled={!comment.trim()}
-                    className="mt-2 px-3 py-1.5 bg-[#0C66E4] hover:bg-[#0055CC] disabled:opacity-50 text-white rounded-lg text-xs font-medium transition-colors"
-                  >
-                    Gửi
-                  </button>
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                {comments.map((c) => (
-                  <div key={c.id} className="flex gap-3">
-                    <Avatar src={c.user.avatar_url} name={c.user.full_name} size="sm" className="flex-shrink-0 mt-0.5" />
+              {/* Comments panel */}
+              {activeTab === 'comments' && (
+                <>
+                  {/* New comment input */}
+                  <div className="flex gap-3 mb-4">
+                    <Avatar src={currentUser?.avatar_url} name={currentUser?.full_name || 'Bạn'} size="sm" className="flex-shrink-0 mt-0.5" />
                     <div className="flex-1">
-                      <div className="flex items-baseline gap-2 mb-1">
-                        <span className="text-sm font-medium text-white">{c.user.full_name}</span>
-                        <span className="text-xs text-[#596773]">{formatRelativeTime(c.created_at)}</span>
-                      </div>
-                      <div className="bg-[#22272B] rounded-xl px-3 py-2">
-                        <p className="text-sm text-[#B6C2CF]">{c.content}</p>
-                      </div>
+                      <textarea
+                        value={comment}
+                        onChange={(e) => setComment(e.target.value)}
+                        placeholder="Viết bình luận..."
+                        rows={2}
+                        className="w-full px-3 py-2 bg-[#22272B] border border-[#454F59] rounded-xl text-[#B6C2CF] placeholder-[#596773] text-sm resize-none focus:outline-none focus:ring-2 focus:ring-[#0C66E4]"
+                        onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleAddComment() }}
+                      />
+                      <button
+                        onClick={handleAddComment}
+                        disabled={!comment.trim() || submittingComment}
+                        className="mt-2 px-3 py-1.5 bg-[#0C66E4] hover:bg-[#0055CC] disabled:opacity-50 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5"
+                      >
+                        {submittingComment && <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                        Gửi
+                      </button>
                     </div>
                   </div>
-                ))}
-              </div>
+
+                  {/* Comments list */}
+                  {loadingComments ? (
+                    <div className="flex justify-center py-4">
+                      <div className="w-5 h-5 border-2 border-[#0C66E4] border-t-transparent rounded-full animate-spin" />
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {cardComments.map((c) => (
+                        <div key={c.id}>
+                          {/* Top-level comment */}
+                          <div className="flex gap-3">
+                            <Avatar src={c.user?.avatar_url} name={c.user?.full_name || '?'} size="sm" className="flex-shrink-0 mt-0.5" />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-baseline gap-2 mb-1">
+                                <span className="text-sm font-medium text-white">{c.user?.full_name}</span>
+                                <span className="text-xs text-[#596773]">{formatRelativeTime(c.created_at)}</span>
+                                {c.is_edited && <span className="text-xs text-[#596773] italic">(đã sửa)</span>}
+                              </div>
+
+                              {editingComment?.id === c.id ? (
+                                <div>
+                                  <textarea
+                                    value={editingComment.content}
+                                    onChange={(e) => setEditingComment((prev) => ({ ...prev, content: e.target.value }))}
+                                    rows={2}
+                                    autoFocus
+                                    className="w-full px-3 py-2 bg-[#22272B] border border-[#0C66E4] rounded-xl text-[#B6C2CF] text-sm resize-none focus:outline-none"
+                                  />
+                                  <div className="flex gap-2 mt-1.5">
+                                    <button onClick={handleSaveEdit} disabled={savingEdit} className="px-3 py-1 bg-[#0C66E4] hover:bg-[#0055CC] disabled:opacity-50 text-white rounded-lg text-xs font-medium flex items-center gap-1">
+                                      {savingEdit && <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                                      Lưu
+                                    </button>
+                                    <button onClick={() => setEditingComment(null)} className="px-3 py-1 bg-[#2C333A] hover:bg-[#38424B] text-[#B6C2CF] rounded-lg text-xs">Hủy</button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="bg-[#22272B] rounded-xl px-3 py-2">
+                                  <p className="text-sm text-[#B6C2CF] whitespace-pre-wrap">{c.content}</p>
+                                </div>
+                              )}
+
+                              {/* Comment actions */}
+                              <div className="flex items-center gap-3 mt-1.5">
+                                <button
+                                  onClick={() => { setReplyingTo(replyingTo === c.id ? null : c.id); setReplyText('') }}
+                                  className="text-xs text-[#596773] hover:text-[#B6C2CF] transition-colors"
+                                >
+                                  Trả lời
+                                </button>
+                                {c.user_id === currentUser?.id && (
+                                  <>
+                                    <button
+                                      onClick={() => setEditingComment({ id: c.id, content: c.content, parentId: null })}
+                                      className="text-xs text-[#596773] hover:text-[#B6C2CF] transition-colors"
+                                    >
+                                      Sửa
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteComment(c.id, null)}
+                                      className="text-xs text-[#596773] hover:text-red-400 transition-colors"
+                                    >
+                                      Xóa
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Replies */}
+                          {(c.replies?.length > 0 || replyingTo === c.id) && (
+                            <div className="ml-9 mt-2 space-y-3 border-l-2 border-[#2C333A] pl-3">
+                              {(c.replies || []).map((r) => (
+                                <div key={r.id} className="flex gap-2">
+                                  <Avatar src={r.user?.avatar_url} name={r.user?.full_name || '?'} size="sm" className="flex-shrink-0 mt-0.5" />
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-baseline gap-2 mb-1">
+                                      <span className="text-sm font-medium text-white">{r.user?.full_name}</span>
+                                      <span className="text-xs text-[#596773]">{formatRelativeTime(r.created_at)}</span>
+                                      {r.is_edited && <span className="text-xs text-[#596773] italic">(đã sửa)</span>}
+                                    </div>
+
+                                    {editingComment?.id === r.id ? (
+                                      <div>
+                                        <textarea
+                                          value={editingComment.content}
+                                          onChange={(e) => setEditingComment((prev) => ({ ...prev, content: e.target.value }))}
+                                          rows={2}
+                                          autoFocus
+                                          className="w-full px-3 py-2 bg-[#22272B] border border-[#0C66E4] rounded-xl text-[#B6C2CF] text-sm resize-none focus:outline-none"
+                                        />
+                                        <div className="flex gap-2 mt-1.5">
+                                          <button onClick={handleSaveEdit} disabled={savingEdit} className="px-3 py-1 bg-[#0C66E4] hover:bg-[#0055CC] disabled:opacity-50 text-white rounded-lg text-xs font-medium flex items-center gap-1">
+                                            {savingEdit && <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                                            Lưu
+                                          </button>
+                                          <button onClick={() => setEditingComment(null)} className="px-3 py-1 bg-[#2C333A] hover:bg-[#38424B] text-[#B6C2CF] rounded-lg text-xs">Hủy</button>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="bg-[#22272B] rounded-xl px-3 py-2">
+                                        <p className="text-sm text-[#B6C2CF] whitespace-pre-wrap">{r.content}</p>
+                                      </div>
+                                    )}
+
+                                    {r.user_id === currentUser?.id && (
+                                      <div className="flex items-center gap-3 mt-1.5">
+                                        <button
+                                          onClick={() => setEditingComment({ id: r.id, content: r.content, parentId: c.id })}
+                                          className="text-xs text-[#596773] hover:text-[#B6C2CF] transition-colors"
+                                        >
+                                          Sửa
+                                        </button>
+                                        <button
+                                          onClick={() => handleDeleteComment(r.id, c.id)}
+                                          className="text-xs text-[#596773] hover:text-red-400 transition-colors"
+                                        >
+                                          Xóa
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+
+                              {/* Reply input */}
+                              {replyingTo === c.id && (
+                                <div className="flex gap-2">
+                                  <Avatar src={currentUser?.avatar_url} name={currentUser?.full_name || 'Bạn'} size="sm" className="flex-shrink-0 mt-0.5" />
+                                  <div className="flex-1">
+                                    <textarea
+                                      value={replyText}
+                                      onChange={(e) => setReplyText(e.target.value)}
+                                      placeholder={`Trả lời ${c.user?.full_name}...`}
+                                      rows={2}
+                                      autoFocus
+                                      className="w-full px-3 py-2 bg-[#22272B] border border-[#454F59] rounded-xl text-[#B6C2CF] placeholder-[#596773] text-sm resize-none focus:outline-none focus:ring-2 focus:ring-[#0C66E4]"
+                                      onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleAddReply(c.id) }}
+                                    />
+                                    <div className="flex gap-2 mt-1.5">
+                                      <button
+                                        onClick={() => handleAddReply(c.id)}
+                                        disabled={!replyText.trim() || submittingReply}
+                                        className="px-3 py-1 bg-[#0C66E4] hover:bg-[#0055CC] disabled:opacity-50 text-white rounded-lg text-xs font-medium flex items-center gap-1"
+                                      >
+                                        {submittingReply && <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                                        Gửi
+                                      </button>
+                                      <button onClick={() => { setReplyingTo(null); setReplyText('') }} className="px-3 py-1 bg-[#2C333A] hover:bg-[#38424B] text-[#B6C2CF] rounded-lg text-xs">Hủy</button>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* Activity panel */}
+              {activeTab === 'activity' && (
+                <div className="space-y-3">
+                  {loadingActivity ? (
+                    <div className="flex justify-center py-6">
+                      <div className="w-5 h-5 border-2 border-[#0C66E4] border-t-transparent rounded-full animate-spin" />
+                    </div>
+                  ) : cardActivity.length === 0 ? (
+                    <p className="text-xs text-[#596773] text-center py-6">Chưa có hoạt động nào.</p>
+                  ) : cardActivity.map((log) => (
+                    <div key={log.id} className="flex gap-3">
+                      <Avatar
+                        src={log.user?.avatar_url}
+                        name={log.user?.full_name || '?'}
+                        size="sm"
+                        className="flex-shrink-0 mt-0.5"
+                      />
+                      <div className="flex-1">
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-sm font-medium text-white">
+                            {log.user?.full_name || 'Người dùng'}
+                          </span>
+                          <span className="text-xs text-[#596773]">{formatRelativeTime(log.created_at)}</span>
+                        </div>
+                        <p className="text-xs text-[#8C9BAB] mt-0.5">{getActionLabel(log)}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
@@ -704,6 +993,27 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
                   </button>
                 ))}
               </div>
+            </div>
+
+            {/* Complete toggle */}
+            <div>
+              <button
+                type="button"
+                onClick={handleToggleComplete}
+                disabled={completing}
+                className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors border disabled:opacity-60 ${
+                  isCompleted
+                    ? 'bg-green-900/30 border-green-700/50 text-green-400 hover:bg-green-900/50'
+                    : 'bg-[#2C333A] border-transparent text-[#B6C2CF] hover:bg-[#38424B]'
+                }`}
+              >
+                {completing ? (
+                  <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <CheckSquare size={13} />
+                )}
+                {isCompleted ? 'Đã hoàn thành' : 'Đánh dấu hoàn thành'}
+              </button>
             </div>
 
             {/* Actions */}

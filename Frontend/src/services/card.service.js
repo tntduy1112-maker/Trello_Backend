@@ -9,8 +9,10 @@ export const archiveCard = (cardId) => api.post(`/cards/${cardId}/archive`)
 export const moveCard = (cardId, data) => api.post(`/cards/${cardId}/move`, data)
 export const assignMember = (cardId, memberId) => api.post(`/cards/${cardId}/members/${memberId}`)
 export const unassignMember = (cardId, memberId) => api.delete(`/cards/${cardId}/members/${memberId}`)
-export const addComment = (cardId, data) => api.post(`/cards/${cardId}/comments`, data)
 export const getComments = (cardId) => api.get(`/cards/${cardId}/comments`)
+export const addComment = (cardId, data) => api.post(`/cards/${cardId}/comments`, data)
+export const updateComment = (commentId, data) => api.put(`/comments/${commentId}`, data)
+export const deleteComment = (commentId) => api.delete(`/comments/${commentId}`)
 export const addAttachment = (cardId, formData) =>
   api.post(`/cards/${cardId}/attachments`, formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
