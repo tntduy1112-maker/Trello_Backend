@@ -3,20 +3,31 @@ const { query } = require('../../configs/postgres');
 const findCardsByListId = async (listId) => {
   const result = await query(
     `SELECT c.*,
-       COALESCE(
-         json_agg(json_build_object(
-           'user_id', cm.user_id,
-           'full_name', u.full_name,
-           'avatar_url', u.avatar_url,
-           'email', u.email
-         )) FILTER (WHERE cm.user_id IS NOT NULL),
-         '[]'
-       ) AS assignees
+       COALESCE(m.assignees, '[]') AS assignees,
+       COALESCE(l.labels,    '[]') AS labels
      FROM cards c
-     LEFT JOIN card_members cm ON cm.card_id = c.id
-     LEFT JOIN users u ON u.id = cm.user_id
+     LEFT JOIN LATERAL (
+       SELECT json_agg(json_build_object(
+         'user_id', cm.user_id,
+         'full_name', u.full_name,
+         'avatar_url', u.avatar_url,
+         'email', u.email
+       )) AS assignees
+       FROM card_members cm
+       JOIN users u ON u.id = cm.user_id
+       WHERE cm.card_id = c.id
+     ) m ON true
+     LEFT JOIN LATERAL (
+       SELECT json_agg(json_build_object(
+         'id', lbl.id,
+         'name', lbl.name,
+         'color', lbl.color
+       )) AS labels
+       FROM card_labels cl
+       JOIN labels lbl ON lbl.id = cl.label_id
+       WHERE cl.card_id = c.id
+     ) l ON true
      WHERE c.list_id = $1 AND c.is_archived = false
-     GROUP BY c.id
      ORDER BY c.position ASC`,
     [listId]
   );
@@ -26,20 +37,31 @@ const findCardsByListId = async (listId) => {
 const findCardById = async (id) => {
   const result = await query(
     `SELECT c.*,
-       COALESCE(
-         json_agg(json_build_object(
-           'user_id', cm.user_id,
-           'full_name', u.full_name,
-           'avatar_url', u.avatar_url,
-           'email', u.email
-         )) FILTER (WHERE cm.user_id IS NOT NULL),
-         '[]'
-       ) AS assignees
+       COALESCE(m.assignees, '[]') AS assignees,
+       COALESCE(l.labels,    '[]') AS labels
      FROM cards c
-     LEFT JOIN card_members cm ON cm.card_id = c.id
-     LEFT JOIN users u ON u.id = cm.user_id
-     WHERE c.id = $1
-     GROUP BY c.id`,
+     LEFT JOIN LATERAL (
+       SELECT json_agg(json_build_object(
+         'user_id', cm.user_id,
+         'full_name', u.full_name,
+         'avatar_url', u.avatar_url,
+         'email', u.email
+       )) AS assignees
+       FROM card_members cm
+       JOIN users u ON u.id = cm.user_id
+       WHERE cm.card_id = c.id
+     ) m ON true
+     LEFT JOIN LATERAL (
+       SELECT json_agg(json_build_object(
+         'id', lbl.id,
+         'name', lbl.name,
+         'color', lbl.color
+       )) AS labels
+       FROM card_labels cl
+       JOIN labels lbl ON lbl.id = cl.label_id
+       WHERE cl.card_id = c.id
+     ) l ON true
+     WHERE c.id = $1`,
     [id]
   );
   return result.rows[0] || null;

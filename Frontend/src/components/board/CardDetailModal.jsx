@@ -3,10 +3,14 @@ import { useDispatch, useSelector } from 'react-redux'
 import {
   X, AlignLeft, CheckSquare, MessageSquare,
   Archive, Trash2, Plus, Check,
-  Edit3, UserX
+  Edit3, UserX, Tag, Pencil,
 } from 'lucide-react'
-import { updateCard, saveCardThunk, deleteCardThunk } from '../../redux/slices/boardSlice'
-import { formatDate, formatRelativeTime, isOverdue, getInitials, generateAvatarColor } from '../../utils/helpers'
+import {
+  updateCard, saveCardThunk, deleteCardThunk,
+  addCardLabelThunk, removeCardLabelThunk,
+  createLabelThunk, updateLabelThunk, deleteLabelThunk,
+} from '../../redux/slices/boardSlice'
+import { formatDate, formatRelativeTime, isOverdue } from '../../utils/helpers'
 import { PRIORITY_COLOR } from '../../data/constants'
 import Avatar from '../ui/Avatar'
 import ProgressBar from '../ui/ProgressBar'
@@ -18,9 +22,24 @@ const PRIORITY_OPTIONS = [
   { value: 'critical', label: 'Khẩn cấp', color: 'text-red-400' },
 ]
 
+const LABEL_COLORS = [
+  '#61BD4F', '#F2D600', '#FF9F1A', '#EB5A46',
+  '#C377E0', '#0079BF', '#00C2E0', '#51E898',
+  '#FF78CB', '#344563',
+]
+
 export default function CardDetailModal({ card, listId, isOpen, onClose, boardMembers = [] }) {
   const dispatch = useDispatch()
   const { user: currentUser } = useSelector((state) => state.auth)
+  const boardLabels = useSelector((state) => state.board.boardLabels)
+  const currentBoard = useSelector((state) => state.board.currentBoard)
+
+  // Derive up-to-date labels from the Redux store so they reflect toggle changes instantly
+  const cardInStore = useSelector((state) => {
+    const cardList = state.board.cards[listId] || []
+    return cardList.find((c) => c.id === card?.id)
+  })
+  const cardLabels = (cardInStore || card)?.labels || []
 
   const [editingTitle, setEditingTitle] = useState(false)
   const [title, setTitle] = useState(card?.title || '')
@@ -41,11 +60,25 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
   const [saveError, setSaveError] = useState('')
   const [descError, setDescError] = useState('')
 
-  // Close picker when clicking outside
+  // Label picker state
+  const [showLabelPicker, setShowLabelPicker] = useState(false)
+  const [newLabelName, setNewLabelName] = useState('')
+  const [newLabelColor, setNewLabelColor] = useState('#0079BF')
+  const [creatingLabel, setCreatingLabel] = useState(false)
+  const [editingLabel, setEditingLabel] = useState(null) // { id, name, color }
+  const [togglingLabelId, setTogglingLabelId] = useState(null)
+  const [labelError, setLabelError] = useState('')
+  const labelPickerRef = useRef(null)
+
+  // Close pickers when clicking outside
   useEffect(() => {
     const handler = (e) => {
       if (memberPickerRef.current && !memberPickerRef.current.contains(e.target)) {
         setShowMemberPicker(false)
+      }
+      if (labelPickerRef.current && !labelPickerRef.current.contains(e.target)) {
+        setShowLabelPicker(false)
+        setEditingLabel(null)
       }
     }
     document.addEventListener('mousedown', handler)
@@ -133,6 +166,63 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
     }
   }
 
+  // ── Label handlers ────────────────────────────────────────────────────────
+
+  const handleToggleLabel = async (label) => {
+    if (togglingLabelId) return
+    setTogglingLabelId(label.id)
+    setLabelError('')
+    const isOn = cardLabels.some((l) => l.id === label.id)
+    try {
+      if (isOn) {
+        await dispatch(removeCardLabelThunk({ cardId: card.id, labelId: label.id, listId })).unwrap()
+      } else {
+        await dispatch(addCardLabelThunk({ cardId: card.id, labelId: label.id, listId })).unwrap()
+      }
+    } catch (err) {
+      setLabelError(typeof err === 'string' ? err : 'Lỗi khi gán nhãn, thử lại.')
+    } finally {
+      setTogglingLabelId(null)
+    }
+  }
+
+  const handleCreateLabel = async () => {
+    if (!newLabelName.trim() || creatingLabel || !currentBoard) return
+    setCreatingLabel(true)
+    setLabelError('')
+    try {
+      const newLabel = await dispatch(createLabelThunk({
+        boardId: currentBoard.id,
+        name: newLabelName.trim(),
+        color: newLabelColor,
+      })).unwrap()
+      setNewLabelName('')
+      // Auto-assign the newly created label to this card immediately
+      await dispatch(addCardLabelThunk({ cardId: card.id, labelId: newLabel.id, listId })).unwrap()
+    } catch (err) {
+      setLabelError(typeof err === 'string' ? err : 'Lỗi khi tạo nhãn.')
+    } finally {
+      setCreatingLabel(false)
+    }
+  }
+
+  const handleSaveEditLabel = async () => {
+    if (!editingLabel) return
+    await dispatch(updateLabelThunk({
+      labelId: editingLabel.id,
+      name: editingLabel.name,
+      color: editingLabel.color,
+    })).unwrap()
+    setEditingLabel(null)
+  }
+
+  const handleDeleteLabel = async (labelId, e) => {
+    e.stopPropagation()
+    await dispatch(deleteLabelThunk(labelId))
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+
   const overdue = isOverdue(dueDate)
 
   return (
@@ -163,12 +253,12 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
         <div className="flex gap-4 p-5">
           {/* Main content (left 2/3) */}
           <div className="flex-1 min-w-0 space-y-5">
-            {/* Labels */}
-            {card.labels && card.labels.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {card.labels.map((label, i) => (
+            {/* Labels (display row at top) */}
+            {cardLabels.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {cardLabels.map((label) => (
                   <span
-                    key={i}
+                    key={label.id}
                     className="px-3 py-1 rounded-full text-xs font-medium text-white"
                     style={{ backgroundColor: label.color }}
                   >
@@ -285,7 +375,6 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
                 <h3 className="text-sm font-semibold text-[#B6C2CF]">Bình luận</h3>
               </div>
 
-              {/* Add comment */}
               <div className="flex gap-3 mb-4">
                 <Avatar src={currentUser?.avatar_url} name={currentUser?.full_name || 'Bạn'} size="sm" className="flex-shrink-0 mt-0.5" />
                 <div className="flex-1">
@@ -309,7 +398,6 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
                 </div>
               </div>
 
-              {/* Comments list */}
               <div className="space-y-3">
                 {comments.map((c) => (
                   <div key={c.id} className="flex gap-3">
@@ -335,7 +423,6 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
             <div ref={memberPickerRef} className="relative">
               <p className="text-xs font-semibold text-[#8C9BAB] mb-2 uppercase tracking-wide">Thành viên</p>
 
-              {/* Current assignee */}
               {assignee ? (
                 <div className="flex items-center gap-2 mb-2 p-2 bg-[#2C333A] rounded-lg">
                   <Avatar src={assignee.avatar_url} name={assignee.full_name} size="sm" />
@@ -362,7 +449,6 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
                 {assignee ? 'Đổi thành viên' : 'Thêm thành viên'}
               </button>
 
-              {/* Dropdown picker */}
               {showMemberPicker && (
                 <div className="absolute right-0 mt-1 w-56 bg-[#282E33] border border-[#454F59] rounded-xl shadow-xl z-20 overflow-hidden">
                   <div className="px-3 py-2 border-b border-[#454F59]">
@@ -402,19 +488,184 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
               )}
             </div>
 
-            {/* Labels */}
-            <div>
+            {/* ── Labels ───────────────────────────────────────────── */}
+            <div ref={labelPickerRef} className="relative">
               <p className="text-xs font-semibold text-[#8C9BAB] mb-2 uppercase tracking-wide">Nhãn</p>
+
+              {/* Current card labels */}
               <div className="flex flex-wrap gap-1 mb-2">
-                {card.labels?.map((label, i) => (
-                  <span key={i} className="px-2 py-0.5 rounded-full text-xs font-medium text-white" style={{ backgroundColor: label.color }}>
+                {cardLabels.length === 0 ? (
+                  <p className="text-xs text-[#596773]">Chưa có nhãn</p>
+                ) : cardLabels.map((label) => (
+                  <span
+                    key={label.id}
+                    className="px-2 py-0.5 rounded-full text-xs font-medium text-white"
+                    style={{ backgroundColor: label.color }}
+                  >
                     {label.name}
                   </span>
                 ))}
               </div>
-              <button className="w-full flex items-center gap-2 px-3 py-1.5 bg-[#2C333A] hover:bg-[#38424B] text-[#B6C2CF] rounded-lg text-xs transition-colors">
-                <Plus size={13} /> Chỉnh sửa nhãn
+
+              <button
+                onClick={() => { setShowLabelPicker((v) => !v); setEditingLabel(null) }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 bg-[#2C333A] hover:bg-[#38424B] text-[#B6C2CF] rounded-lg text-xs transition-colors"
+              >
+                <Tag size={13} /> Chỉnh sửa nhãn
               </button>
+
+              {/* Label picker dropdown */}
+              {showLabelPicker && (
+                <div className="absolute right-0 mt-1 w-64 bg-[#282E33] border border-[#454F59] rounded-xl shadow-2xl z-20">
+                  {/* Header */}
+                  <div className="px-3 py-2 border-b border-[#454F59] flex items-center justify-between">
+                    <p className="text-xs font-semibold text-[#8C9BAB]">Nhãn</p>
+                    <button
+                      onClick={() => setShowLabelPicker(false)}
+                      className="text-[#596773] hover:text-[#B6C2CF] transition-colors"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+
+                  {/* Board labels list */}
+                  <div className="py-1 max-h-48 overflow-y-auto">
+                    {boardLabels.length === 0 ? (
+                      <p className="text-xs text-[#596773] text-center py-3 px-3">
+                        Chưa có nhãn. Tạo nhãn đầu tiên bên dưới.
+                      </p>
+                    ) : boardLabels.map((label) => {
+                      const isOn = cardLabels.some((l) => l.id === label.id)
+                      const isEditing = editingLabel?.id === label.id
+
+                      return (
+                        <div key={label.id}>
+                          {isEditing ? (
+                            /* Inline edit row */
+                            <div className="px-3 py-2 bg-[#2C333A] space-y-2">
+                              <input
+                                value={editingLabel.name}
+                                onChange={(e) => setEditingLabel((prev) => ({ ...prev, name: e.target.value }))}
+                                className="w-full px-2 py-1 bg-[#22272B] border border-[#454F59] rounded-lg text-xs text-[#B6C2CF] focus:outline-none focus:ring-1 focus:ring-[#0C66E4]"
+                                placeholder="Tên nhãn"
+                                autoFocus
+                              />
+                              <div className="flex flex-wrap gap-1">
+                                {LABEL_COLORS.map((hex) => (
+                                  <button
+                                    key={hex}
+                                    onClick={() => setEditingLabel((prev) => ({ ...prev, color: hex }))}
+                                    className={`w-6 h-4 rounded transition-all ${editingLabel.color === hex ? 'ring-2 ring-white ring-offset-1 ring-offset-[#2C333A]' : ''}`}
+                                    style={{ backgroundColor: hex }}
+                                  />
+                                ))}
+                              </div>
+                              <div className="flex gap-1.5">
+                                <button
+                                  onClick={handleSaveEditLabel}
+                                  className="flex-1 py-1 bg-[#0C66E4] hover:bg-[#0055CC] text-white rounded text-xs font-medium"
+                                >
+                                  Lưu
+                                </button>
+                                <button
+                                  onClick={() => setEditingLabel(null)}
+                                  className="flex-1 py-1 bg-[#454F59] hover:bg-[#596773] text-[#B6C2CF] rounded text-xs"
+                                >
+                                  Hủy
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            /* Normal label row */
+                            <button
+                              type="button"
+                              disabled={!!togglingLabelId}
+                              className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-[#2C333A] cursor-pointer group text-left disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                              onClick={() => handleToggleLabel(label)}
+                            >
+                              {/* Checkbox / spinner */}
+                              {togglingLabelId === label.id ? (
+                                <div className="w-4 h-4 flex items-center justify-center flex-shrink-0">
+                                  <div className="w-3 h-3 border-2 border-[#0C66E4] border-t-transparent rounded-full animate-spin" />
+                                </div>
+                              ) : (
+                                <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
+                                  isOn ? 'bg-[#0C66E4] border-[#0C66E4]' : 'border-[#596773]'
+                                }`}>
+                                  {isOn && <Check size={10} className="text-white" />}
+                                </div>
+                              )}
+                              {/* Color swatch + name */}
+                              <div
+                                className="h-5 rounded flex-shrink-0"
+                                style={{ width: 32, backgroundColor: label.color }}
+                              />
+                              <span className="flex-1 text-xs text-[#B6C2CF] truncate">{label.name || '(no name)'}</span>
+                              {/* Edit button */}
+                              <span
+                                role="button"
+                                tabIndex={-1}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setEditingLabel({ id: label.id, name: label.name || '', color: label.color })
+                                }}
+                                className="opacity-0 group-hover:opacity-100 text-[#596773] hover:text-[#B6C2CF] transition-all flex-shrink-0 p-0.5"
+                              >
+                                <Pencil size={11} />
+                              </span>
+                              {/* Delete button */}
+                              <span
+                                role="button"
+                                tabIndex={-1}
+                                onClick={(e) => handleDeleteLabel(label.id, e)}
+                                className="opacity-0 group-hover:opacity-100 text-[#596773] hover:text-red-400 transition-all flex-shrink-0 p-0.5"
+                              >
+                                <X size={11} />
+                              </span>
+                            </button>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {/* Create new label */}
+                  <div className="border-t border-[#454F59] p-3 space-y-2">
+                    <p className="text-xs font-semibold text-[#8C9BAB]">Tạo nhãn mới</p>
+                    {labelError && (
+                      <p className="text-xs text-red-400 px-1">{labelError}</p>
+                    )}
+                    <input
+                      value={newLabelName}
+                      onChange={(e) => { setNewLabelName(e.target.value); setLabelError('') }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleCreateLabel() }}
+                      placeholder="Tên nhãn..."
+                      className="w-full px-2 py-1.5 bg-[#22272B] border border-[#454F59] rounded-lg text-xs text-[#B6C2CF] placeholder-[#596773] focus:outline-none focus:ring-1 focus:ring-[#0C66E4]"
+                    />
+                    {/* Color palette */}
+                    <div className="flex flex-wrap gap-1.5">
+                      {LABEL_COLORS.map((hex) => (
+                        <button
+                          key={hex}
+                          onClick={() => setNewLabelColor(hex)}
+                          className={`w-7 h-5 rounded transition-all ${newLabelColor === hex ? 'ring-2 ring-white ring-offset-1 ring-offset-[#282E33]' : ''}`}
+                          style={{ backgroundColor: hex }}
+                        />
+                      ))}
+                    </div>
+                    <button
+                      onClick={handleCreateLabel}
+                      disabled={!newLabelName.trim() || creatingLabel}
+                      className="w-full flex items-center justify-center gap-2 py-1.5 bg-[#0C66E4] hover:bg-[#0055CC] disabled:opacity-50 text-white rounded-lg text-xs font-medium transition-colors"
+                    >
+                      {creatingLabel && (
+                        <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      )}
+                      {creatingLabel ? 'Đang tạo & gán...' : 'Tạo nhãn'}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Due date */}

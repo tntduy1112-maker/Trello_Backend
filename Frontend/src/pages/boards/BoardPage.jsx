@@ -18,7 +18,7 @@ import {
   Plus, Globe, Lock, Users, UserPlus, Filter,
   ArrowLeft, MoreHorizontal, Star
 } from 'lucide-react'
-import { setLists, setCards, clearBoard, fetchBoard, fetchBoardLists, createListThunk } from '../../redux/slices/boardSlice'
+import { setLists, setCards, clearBoard, fetchBoard, fetchBoardLists, fetchBoardLabels, createListThunk } from '../../redux/slices/boardSlice'
 import { getBoardMembers } from '../../services/board.service'
 import Navbar from '../../components/layout/Navbar'
 import ListColumn from '../../components/board/ListColumn'
@@ -94,6 +94,7 @@ export default function BoardPage() {
     dispatch(clearBoard())
     dispatch(fetchBoard(boardId))
     dispatch(fetchBoardLists(boardId))
+    dispatch(fetchBoardLabels(boardId))
     getBoardMembers(boardId)
       .then((res) => setBoardMembers(res.data.data.members || []))
       .catch(() => {})

@@ -2,6 +2,14 @@ import { createSlice, createAsyncThunk } from '@reduxjs/toolkit'
 import { getBoard } from '../../services/board.service'
 import { getLists, createList } from '../../services/list.service'
 import { getCards, createCard, updateCard as updateCardApi, deleteCard as deleteCardApi } from '../../services/card.service'
+import {
+  getBoardLabels,
+  createLabel as createLabelApi,
+  updateLabel as updateLabelApi,
+  deleteLabel as deleteLabelApi,
+  addCardLabel as addCardLabelApi,
+  removeCardLabel as removeCardLabelApi,
+} from '../../services/label.service'
 
 export const fetchBoard = createAsyncThunk(
   'board/fetchBoard',
@@ -90,11 +98,88 @@ export const deleteCardThunk = createAsyncThunk(
   }
 )
 
+// ── Labels ────────────────────────────────────────────────────────────────────
+
+export const fetchBoardLabels = createAsyncThunk(
+  'board/fetchBoardLabels',
+  async (boardId, { rejectWithValue }) => {
+    try {
+      const res = await getBoardLabels(boardId)
+      return res.data.data.labels
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to load labels')
+    }
+  }
+)
+
+export const createLabelThunk = createAsyncThunk(
+  'board/createLabel',
+  async ({ boardId, name, color }, { rejectWithValue }) => {
+    try {
+      const res = await createLabelApi(boardId, { name, color })
+      return res.data.data.label
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to create label')
+    }
+  }
+)
+
+export const updateLabelThunk = createAsyncThunk(
+  'board/updateLabel',
+  async ({ labelId, name, color }, { rejectWithValue }) => {
+    try {
+      const res = await updateLabelApi(labelId, { name, color })
+      return res.data.data.label
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to update label')
+    }
+  }
+)
+
+export const deleteLabelThunk = createAsyncThunk(
+  'board/deleteLabel',
+  async (labelId, { rejectWithValue }) => {
+    try {
+      await deleteLabelApi(labelId)
+      return labelId
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to delete label')
+    }
+  }
+)
+
+export const addCardLabelThunk = createAsyncThunk(
+  'board/addCardLabel',
+  async ({ cardId, labelId, listId }, { rejectWithValue }) => {
+    try {
+      const res = await addCardLabelApi(cardId, labelId)
+      return { cardId, listId, labels: res.data.data.labels }
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to add label')
+    }
+  }
+)
+
+export const removeCardLabelThunk = createAsyncThunk(
+  'board/removeCardLabel',
+  async ({ cardId, labelId, listId }, { rejectWithValue }) => {
+    try {
+      const res = await removeCardLabelApi(cardId, labelId)
+      return { cardId, listId, labels: res.data.data.labels }
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to remove label')
+    }
+  }
+)
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 const initialState = {
   boards: [],
   currentBoard: null,
   lists: [],
   cards: {},
+  boardLabels: [],
   loadingBoard: false,
   loadingLists: false,
 }
@@ -119,6 +204,7 @@ const boardSlice = createSlice({
       state.currentBoard = null
       state.lists = []
       state.cards = {}
+      state.boardLabels = []
       state.loadingBoard = false
       state.loadingLists = false
     },
@@ -216,6 +302,53 @@ const boardSlice = createSlice({
         const { cardId, listId } = action.payload
         if (state.cards[listId]) {
           state.cards[listId] = state.cards[listId].filter((c) => c.id !== cardId)
+        }
+      })
+      // Labels
+      .addCase(fetchBoardLabels.fulfilled, (state, action) => {
+        state.boardLabels = action.payload
+      })
+      .addCase(createLabelThunk.fulfilled, (state, action) => {
+        state.boardLabels.push(action.payload)
+      })
+      .addCase(updateLabelThunk.fulfilled, (state, action) => {
+        const updated = action.payload
+        const idx = state.boardLabels.findIndex((l) => l.id === updated.id)
+        if (idx !== -1) state.boardLabels[idx] = updated
+        // Sync updated label into all cards
+        Object.values(state.cards).forEach((cardList) => {
+          cardList.forEach((card) => {
+            if (card.labels) {
+              const li = card.labels.findIndex((l) => l.id === updated.id)
+              if (li !== -1) card.labels[li] = { id: updated.id, name: updated.name, color: updated.color }
+            }
+          })
+        })
+      })
+      .addCase(deleteLabelThunk.fulfilled, (state, action) => {
+        const labelId = action.payload
+        state.boardLabels = state.boardLabels.filter((l) => l.id !== labelId)
+        // Remove deleted label from all cards
+        Object.values(state.cards).forEach((cardList) => {
+          cardList.forEach((card) => {
+            if (card.labels) {
+              card.labels = card.labels.filter((l) => l.id !== labelId)
+            }
+          })
+        })
+      })
+      .addCase(addCardLabelThunk.fulfilled, (state, action) => {
+        const { listId, cardId, labels } = action.payload
+        if (state.cards[listId]) {
+          const card = state.cards[listId].find((c) => c.id === cardId)
+          if (card) card.labels = labels
+        }
+      })
+      .addCase(removeCardLabelThunk.fulfilled, (state, action) => {
+        const { listId, cardId, labels } = action.payload
+        if (state.cards[listId]) {
+          const card = state.cards[listId].find((c) => c.id === cardId)
+          if (card) card.labels = labels
         }
       })
   },
