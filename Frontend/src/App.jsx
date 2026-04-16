@@ -22,6 +22,9 @@ import BoardPage from './pages/boards/BoardPage'
 // Profile
 import ProfilePage from './pages/profile/ProfilePage'
 
+// Invitations
+import AcceptInvitePage from './pages/invitations/AcceptInvitePage'
+
 function ProtectedRoute({ children }) {
   const { isAuthenticated } = useSelector((state) => state.auth)
   if (!isAuthenticated) {
@@ -68,6 +71,9 @@ export default function App() {
       <Route path="/workspaces/:slug/settings" element={<ProtectedRoute><WorkspaceSettingsPage /></ProtectedRoute>} />
       <Route path="/board/:boardId" element={<ProtectedRoute><BoardPage /></ProtectedRoute>} />
       <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
+
+      {/* Invitation accept — no auth wrapper, page handles both states */}
+      <Route path="/accept-invite" element={<AcceptInvitePage />} />
 
       {/* Fallback */}
       <Route path="*" element={<Navigate to="/home" replace />} />

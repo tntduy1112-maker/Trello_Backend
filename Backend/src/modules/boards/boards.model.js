@@ -89,6 +89,68 @@ const removeMember = async (boardId, userId) => {
   );
 };
 
+const findUserById = async (id) => {
+  const result = await query(`SELECT * FROM users WHERE id = $1`, [id]);
+  return result.rows[0] || null;
+};
+
+// ── Board Invitations ─────────────────────────────────────────────────────────
+
+const createInvitation = async (boardId, email, role, token, invitedBy, expiresAt) => {
+  const result = await query(
+    `INSERT INTO board_invitations (board_id, email, role, token, invited_by, expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+    [boardId, email, role, token, invitedBy, expiresAt]
+  );
+  return result.rows[0];
+};
+
+const findInvitationByToken = async (token) => {
+  const result = await query(
+    `SELECT bi.*, b.name AS board_name, u.full_name AS inviter_name
+     FROM board_invitations bi
+     JOIN boards b ON b.id = bi.board_id
+     LEFT JOIN users u ON u.id = bi.invited_by
+     WHERE bi.token = $1`,
+    [token]
+  );
+  return result.rows[0] || null;
+};
+
+const findPendingInvitation = async (boardId, email) => {
+  const result = await query(
+    `SELECT * FROM board_invitations
+     WHERE board_id = $1 AND email = $2
+       AND accepted_at IS NULL AND expires_at > NOW()`,
+    [boardId, email]
+  );
+  return result.rows[0] || null;
+};
+
+const findPendingInvitationsByBoard = async (boardId) => {
+  const result = await query(
+    `SELECT bi.*, u.full_name AS inviter_name
+     FROM board_invitations bi
+     LEFT JOIN users u ON u.id = bi.invited_by
+     WHERE bi.board_id = $1
+       AND bi.accepted_at IS NULL AND bi.expires_at > NOW()
+     ORDER BY bi.created_at DESC`,
+    [boardId]
+  );
+  return result.rows;
+};
+
+const markInvitationAccepted = async (invitationId) => {
+  await query(
+    `UPDATE board_invitations SET accepted_at = NOW() WHERE id = $1`,
+    [invitationId]
+  );
+};
+
+const deleteInvitation = async (invitationId) => {
+  await query(`DELETE FROM board_invitations WHERE id = $1`, [invitationId]);
+};
+
 module.exports = {
   createBoard,
   findBoardById,
@@ -100,4 +162,11 @@ module.exports = {
   getMembers,
   updateMemberRole,
   removeMember,
+  findUserById,
+  createInvitation,
+  findInvitationByToken,
+  findPendingInvitation,
+  findPendingInvitationsByBoard,
+  markInvitationAccepted,
+  deleteInvitation,
 };

@@ -46,5 +46,7 @@ boardRouter.get('/members', controller.getMembers);
 boardRouter.post('/members', validate(inviteMemberSchema), controller.inviteMember);
 boardRouter.put('/members/:userId', validate(updateRoleSchema), controller.updateMemberRole);
 boardRouter.delete('/members/:userId', controller.removeMember);
+boardRouter.get('/invitations', controller.getPendingInvitations);
+boardRouter.delete('/invitations/:invitationId', controller.revokeInvitation);
 
 module.exports = { orgBoardsRouter: router, boardRouter };

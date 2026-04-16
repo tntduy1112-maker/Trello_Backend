@@ -1,12 +1,13 @@
 import React, { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Eye, EyeOff, Mail, Lock, User } from 'lucide-react'
 import { register } from '../../services/auth.service'
 import AuthLayout from '../../components/layout/AuthLayout'
 
 export default function RegisterPage() {
   const navigate = useNavigate()
-  const [form, setForm] = useState({ full_name: '', email: '', password: '', confirm_password: '' })
+  const [searchParams] = useSearchParams()
+  const [form, setForm] = useState({ full_name: '', email: searchParams.get('email') || '', password: '', confirm_password: '' })
   const [errors, setErrors] = useState({})
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)

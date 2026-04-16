@@ -34,7 +34,13 @@ export default function LoginPage() {
       const res = await login({ email: form.email, password: form.password })
       const { accessToken, refreshToken, user } = res.data.data
       dispatch(setCredentials({ user, token: accessToken, refreshToken }))
-      navigate('/home')
+      const pending = sessionStorage.getItem('pendingInviteToken')
+      if (pending) {
+        sessionStorage.removeItem('pendingInviteToken')
+        navigate(`/accept-invite?token=${pending}`)
+      } else {
+        navigate('/home')
+      }
     } catch (err) {
       setApiError(err.response?.data?.message || 'Email hoặc mật khẩu không đúng')
     } finally {

@@ -1,6 +1,8 @@
+const crypto = require('crypto');
 const model = require('./boards.model');
 const orgModel = require('../organizations/organizations.model');
 const { findUserByEmail } = require('../auth/auth.model');
+const { sendBoardAddedEmail, sendBoardInvitationEmail } = require('../../utils/email');
 
 const assertBoardRole = (member, allowedRoles) => {
   if (!member || !allowedRoles.includes(member.role)) {
@@ -152,30 +154,63 @@ const deleteBoard = async (userId, boardId) => {
 
 const inviteMember = async (userId, boardId, { email, role }) => {
   const board = await model.findBoardById(boardId);
-  if (!board) {
-    const err = new Error('Board not found');
-    err.statusCode = 404;
-    throw err;
-  }
+  if (!board) { const e = new Error('Board not found'); e.statusCode = 404; throw e; }
 
   const requester = await model.getMember(boardId, userId);
   assertBoardRole(requester, ['owner', 'admin']);
 
+  const inviter = await model.findUserById(userId);
   const targetUser = await findUserByEmail(email);
-  if (!targetUser) {
-    const err = new Error('User not found');
-    err.statusCode = 404;
-    throw err;
+
+  if (targetUser) {
+    // ── Flow A: user already has an account ──────────────────────────────────
+    const existing = await model.getMember(boardId, targetUser.id);
+    if (existing) { const e = new Error('User is already a board member'); e.statusCode = 409; throw e; }
+
+    const member = await model.addMember(boardId, targetUser.id, role || 'member', userId);
+    sendBoardAddedEmail(
+      targetUser.email, targetUser.full_name, board.name, inviter?.full_name || 'Someone'
+    ).catch(() => {});
+
+    return { status: 'added', member };
   }
 
-  const existing = await model.getMember(boardId, targetUser.id);
-  if (existing) {
-    const err = new Error('User is already a board member');
-    err.statusCode = 409;
-    throw err;
+  // ── Flow B: email has no account yet ─────────────────────────────────────
+  const pending = await model.findPendingInvitation(boardId, email);
+  if (pending) {
+    const e = new Error('Lời mời đang chờ đã được gửi tới email này');
+    e.statusCode = 409;
+    throw e;
   }
 
-  return model.addMember(boardId, targetUser.id, role || 'member', userId);
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+  await model.createInvitation(boardId, email, role || 'member', token, userId, expiresAt);
+  sendBoardInvitationEmail(
+    email, board.name, inviter?.full_name || 'Someone', token
+  ).catch(() => {});
+
+  return { status: 'invited', email };
+};
+
+const getPendingInvitations = async (userId, boardId) => {
+  const board = await model.findBoardById(boardId);
+  if (!board) { const e = new Error('Board not found'); e.statusCode = 404; throw e; }
+
+  const requester = await model.getMember(boardId, userId);
+  assertBoardRole(requester, ['owner', 'admin']);
+
+  return model.findPendingInvitationsByBoard(boardId);
+};
+
+const revokeInvitation = async (userId, boardId, invitationId) => {
+  const board = await model.findBoardById(boardId);
+  if (!board) { const e = new Error('Board not found'); e.statusCode = 404; throw e; }
+
+  const requester = await model.getMember(boardId, userId);
+  assertBoardRole(requester, ['owner', 'admin']);
+
+  await model.deleteInvitation(invitationId);
 };
 
 const updateMemberRole = async (userId, boardId, targetUserId, role) => {
@@ -260,4 +295,6 @@ module.exports = {
   updateMemberRole,
   removeMember,
   getMembers,
+  getPendingInvitations,
+  revokeInvitation,
 };

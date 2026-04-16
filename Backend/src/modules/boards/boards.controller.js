@@ -48,8 +48,27 @@ const deleteBoard = async (req, res, next) => {
 
 const inviteMember = async (req, res, next) => {
   try {
-    const member = await service.inviteMember(req.user.userId, req.params.boardId, req.body);
-    return success(res, { member }, 'Member invited', 201);
+    const result = await service.inviteMember(req.user.userId, req.params.boardId, req.body);
+    const message = result.status === 'added' ? 'Member added' : 'Invitation sent';
+    return success(res, result, message, 201);
+  } catch (err) {
+    next(err);
+  }
+};
+
+const getPendingInvitations = async (req, res, next) => {
+  try {
+    const invitations = await service.getPendingInvitations(req.user.userId, req.params.boardId);
+    return success(res, { invitations });
+  } catch (err) {
+    next(err);
+  }
+};
+
+const revokeInvitation = async (req, res, next) => {
+  try {
+    await service.revokeInvitation(req.user.userId, req.params.boardId, req.params.invitationId);
+    return success(res, null, 'Invitation revoked');
   } catch (err) {
     next(err);
   }
@@ -97,4 +116,6 @@ module.exports = {
   getMembers,
   updateMemberRole,
   removeMember,
+  getPendingInvitations,
+  revokeInvitation,
 };

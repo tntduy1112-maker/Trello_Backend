@@ -55,4 +55,52 @@ const sendPasswordResetEmail = async (toEmail, fullName, token) => {
   });
 };
 
-module.exports = { sendVerificationEmail, sendPasswordResetEmail };
+const sendBoardAddedEmail = async (toEmail, fullName, boardName, inviterName) => {
+  await transporter.sendMail({
+    from: env.mail.from,
+    to: toEmail,
+    subject: `TaskFlow — Bạn đã được thêm vào board "${boardName}"`,
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:32px;border:1px solid #e5e7eb;border-radius:8px;">
+        <h2 style="color:#0052CC;margin-bottom:8px;">TaskFlow</h2>
+        <p style="font-size:16px;">Xin chào <strong>${fullName}</strong>,</p>
+        <p style="color:#374151;">
+          <strong>${inviterName}</strong> đã thêm bạn vào board
+          <strong>"${boardName}"</strong> với vai trò thành viên.
+        </p>
+        <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/home"
+           style="display:inline-block;margin:24px 0;padding:12px 28px;background:#0052CC;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold;">
+          Mở TaskFlow
+        </a>
+        <p style="color:#6b7280;font-size:13px;">Nếu bạn không mong đợi lời mời này, hãy liên hệ quản trị viên.</p>
+      </div>
+    `,
+  });
+};
+
+const sendBoardInvitationEmail = async (toEmail, boardName, inviterName, token) => {
+  const inviteUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/accept-invite?token=${token}`;
+  await transporter.sendMail({
+    from: env.mail.from,
+    to: toEmail,
+    subject: `TaskFlow — ${inviterName} mời bạn tham gia board "${boardName}"`,
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;padding:32px;border:1px solid #e5e7eb;border-radius:8px;">
+        <h2 style="color:#0052CC;margin-bottom:8px;">TaskFlow</h2>
+        <p style="font-size:16px;">Xin chào,</p>
+        <p style="color:#374151;">
+          <strong>${inviterName}</strong> đã mời bạn tham gia board
+          <strong>"${boardName}"</strong> trên TaskFlow.
+        </p>
+        <a href="${inviteUrl}"
+           style="display:inline-block;margin:24px 0;padding:12px 28px;background:#0052CC;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold;">
+          Chấp nhận lời mời
+        </a>
+        <p style="color:#6b7280;font-size:13px;">Link có hiệu lực trong <strong>7 ngày</strong>.</p>
+        <p style="color:#6b7280;font-size:13px;">Nếu bạn không mong đợi lời mời này, hãy bỏ qua email này.</p>
+      </div>
+    `,
+  });
+};
+
+module.exports = { sendVerificationEmail, sendPasswordResetEmail, sendBoardAddedEmail, sendBoardInvitationEmail };

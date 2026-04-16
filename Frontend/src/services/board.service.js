@@ -11,3 +11,9 @@ export const updateBoardMemberRole = (boardId, memberId, role) =>
   api.put(`/boards/${boardId}/members/${memberId}`, { role })
 export const removeBoardMember = (boardId, memberId) =>
   api.delete(`/boards/${boardId}/members/${memberId}`)
+
+export const getPendingInvitations = (boardId) =>
+  api.get(`/boards/${boardId}/invitations`)
+
+export const revokeInvitation = (boardId, invitationId) =>
+  api.delete(`/boards/${boardId}/invitations/${invitationId}`)
