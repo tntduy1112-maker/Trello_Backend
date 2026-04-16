@@ -1,4 +1,5 @@
 const { query } = require('../../configs/postgres');
+const redis = require('../../configs/redis');
 
 const createUser = async (email, passwordHash, fullName) => {
   const result = await query(
@@ -44,28 +45,28 @@ const updateUser = async (id, fields) => {
   return result.rows[0] || null;
 };
 
-const createRefreshToken = async (userId, token, expiresAt, deviceInfo) => {
+const createRefreshToken = async (userId, tokenHash, expiresAt, deviceInfo) => {
   const result = await query(
-    `INSERT INTO refresh_tokens (user_id, token, expires_at, device_info)
+    `INSERT INTO refresh_tokens (user_id, token_hash, expires_at, device_info)
      VALUES ($1, $2, $3, $4)
      RETURNING *`,
-    [userId, token, expiresAt, deviceInfo || null]
+    [userId, tokenHash, expiresAt, deviceInfo || null]
   );
   return result.rows[0];
 };
 
-const findRefreshToken = async (token) => {
+const findRefreshToken = async (tokenHash) => {
   const result = await query(
-    `SELECT * FROM refresh_tokens WHERE token = $1`,
-    [token]
+    `SELECT * FROM refresh_tokens WHERE token_hash = $1`,
+    [tokenHash]
   );
   return result.rows[0] || null;
 };
 
-const revokeRefreshToken = async (token) => {
+const revokeRefreshToken = async (tokenHash) => {
   await query(
-    `UPDATE refresh_tokens SET is_revoked = true WHERE token = $1`,
-    [token]
+    `UPDATE refresh_tokens SET is_revoked = true WHERE token_hash = $1`,
+    [tokenHash]
   );
 };
 
@@ -101,6 +102,33 @@ const markEmailVerificationUsed = async (id) => {
   );
 };
 
+// ── Token blacklist (Redis) ──────────────────────────────────────────────────
+// Key pattern: blacklist:<jti>
+// TTL = seconds until the AT naturally expires — Redis auto-deletes, no cleanup job needed
+
+const addToBlacklist = async (jti, userId, reason, expiresAt) => {
+  const ttlSeconds = Math.max(1, Math.floor((new Date(expiresAt) - Date.now()) / 1000));
+  // Value stores reason for audit; NX = only set if not exists (idempotent)
+  await redis.set(`blacklist:${jti}`, reason, 'EX', ttlSeconds, 'NX');
+};
+
+const isBlacklisted = async (jti) => {
+  const val = await redis.exists(`blacklist:${jti}`);
+  return val === 1;
+};
+
+// Stamp tokens_valid_after = NOW() → invalidates all ATs issued before this moment
+// Still uses Postgres — this is user state, not ephemeral token state
+const invalidateAllUserTokens = async (userId) => {
+  await query(
+    `UPDATE users SET tokens_valid_after = NOW() WHERE id = $1`,
+    [userId]
+  );
+};
+
+// No-op: Redis TTL handles cleanup automatically
+const cleanupBlacklist = async () => {};
+
 module.exports = {
   createUser,
   findUserByEmail,
@@ -113,4 +141,8 @@ module.exports = {
   createEmailVerification,
   findEmailVerification,
   markEmailVerificationUsed,
+  addToBlacklist,
+  isBlacklisted,
+  invalidateAllUserTokens,
+  cleanupBlacklist,
 };

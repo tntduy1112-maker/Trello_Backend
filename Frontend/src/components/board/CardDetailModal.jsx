@@ -4,6 +4,7 @@ import {
   X, AlignLeft, CheckSquare, MessageSquare,
   Archive, Trash2, Plus, Check,
   Edit3, UserX, Tag, Pencil, Activity,
+  Paperclip, FileText, Image, Download, CheckCircle, AlertCircle,
 } from 'lucide-react'
 import {
   updateCard, saveCardThunk, deleteCardThunk,
@@ -11,6 +12,8 @@ import {
   createLabelThunk, updateLabelThunk, deleteLabelThunk,
   fetchCardActivity, fetchCardComments,
   addCommentThunk, editCommentThunk, deleteCommentThunk,
+  fetchCardAttachments, addAttachmentThunk,
+  deleteAttachmentThunk, toggleAttachmentCoverThunk,
 } from '../../redux/slices/boardSlice'
 import { formatDate, formatRelativeTime, isOverdue } from '../../utils/helpers'
 import { PRIORITY_COLOR } from '../../data/constants'
@@ -58,6 +61,8 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
   const loadingActivity = useSelector((state) => state.board.loadingActivity)
   const cardComments = useSelector((state) => state.board.cardComments)
   const loadingComments = useSelector((state) => state.board.loadingComments)
+  const cardAttachments = useSelector((state) => state.board.cardAttachments)
+  const loadingAttachments = useSelector((state) => state.board.loadingAttachments)
 
   // Derive up-to-date labels from the Redux store so they reflect toggle changes instantly
   const cardInStore = useSelector((state) => {
@@ -104,11 +109,19 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
   const [labelError, setLabelError] = useState('')
   const labelPickerRef = useRef(null)
 
-  // Fetch comments + activity when modal opens
+  // Attachments
+  const fileInputRef = useRef(null)
+  const [uploadingFile, setUploadingFile] = useState(false)
+  const [uploadError, setUploadError] = useState('')
+  const [downloadingId, setDownloadingId] = useState(null)
+  const [toast, setToast] = useState(null) // { message, type: 'success'|'error' }
+
+  // Fetch comments, activity, attachments when modal opens
   useEffect(() => {
     if (isOpen && card?.id) {
       dispatch(fetchCardComments(card.id))
       dispatch(fetchCardActivity(card.id))
+      dispatch(fetchCardAttachments(card.id))
     }
   }, [isOpen, card?.id, dispatch])
 
@@ -126,6 +139,13 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [])
+
+  // Auto-clear toast after 3.5 s
+  useEffect(() => {
+    if (!toast) return
+    const t = setTimeout(() => setToast(null), 3500)
+    return () => clearTimeout(t)
+  }, [toast])
 
   if (!isOpen || !card) return null
 
@@ -311,6 +331,94 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
     await dispatch(deleteLabelThunk(labelId))
   }
 
+  // ── Attachment handlers ────────────────────────────────────────────────────
+
+  const handleFileUpload = async (e) => {
+    const files = Array.from(e.target.files)
+    if (!files.length) return
+    setUploadError('')
+    setUploadingFile(true)
+    try {
+      for (const file of files) {
+        const formData = new FormData()
+        formData.append('file', file)
+        await dispatch(addAttachmentThunk({ cardId: card.id, listId, formData })).unwrap()
+      }
+    } catch (err) {
+      setUploadError(typeof err === 'string' ? err : 'Tải lên thất bại, thử lại.')
+    } finally {
+      setUploadingFile(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  const handleDeleteAttachment = async (attachmentId) => {
+    try {
+      await dispatch(deleteAttachmentThunk({ cardId: card.id, listId, attachmentId })).unwrap()
+    } catch {
+      // silently ignore
+    }
+  }
+
+  const handleToggleCover = async (attachmentId) => {
+    try {
+      await dispatch(toggleAttachmentCoverThunk({ cardId: card.id, listId, attachmentId })).unwrap()
+    } catch {
+      // silently ignore
+    }
+  }
+
+  const handleDownload = async (att) => {
+    if (downloadingId) return
+    setDownloadingId(att.id)
+    setToast(null)
+    try {
+      // Fetch file as Blob (verifies network & integrity before writing to disk)
+      const response = await fetch(att.file_url)
+      if (!response.ok) throw new Error('Network error')
+      const blob = await response.blob()
+
+      // Try File System Access API (Chrome/Edge 86+) → opens OS Save-As dialog
+      if (typeof window.showSaveFilePicker === 'function') {
+        const ext = att.file_name.includes('.') ? `.${att.file_name.split('.').pop()}` : ''
+        const mimeType = att.file_type || 'application/octet-stream'
+        const handle = await window.showSaveFilePicker({
+          suggestedName: att.file_name,
+          types: [{ description: 'File', accept: { [mimeType]: ext ? [ext] : [] } }],
+        })
+        const writable = await handle.createWritable()
+        await writable.write(blob)
+        await writable.close()
+      } else {
+        // Fallback: programmatic anchor — respects browser "Ask where to save" setting
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = att.file_name
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+      }
+      setToast({ message: `Đã tải về: ${att.file_name}`, type: 'success' })
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        // User cancelled the Save-As dialog — silent, no toast
+      } else {
+        setToast({ message: 'Tải về thất bại. Kiểm tra kết nối mạng.', type: 'error' })
+      }
+    } finally {
+      setDownloadingId(null)
+    }
+  }
+
+  const formatFileSize = (bytes) => {
+    if (!bytes) return ''
+    if (bytes < 1024) return `${bytes} B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
 
   const overdue = isOverdue(dueDate)
@@ -324,8 +432,14 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
         onClick={(e) => e.stopPropagation()}
       >
         {/* Cover */}
-        {card.cover_color && (
-          <div className="h-28 rounded-t-2xl flex items-end p-4" style={{ backgroundColor: card.cover_color }}>
+        {(card.cover_image_url || card.cover_color) && (
+          <div
+            className="h-28 rounded-t-2xl flex items-end p-4 bg-cover bg-center"
+            style={card.cover_image_url
+              ? { backgroundImage: `url(${card.cover_image_url})` }
+              : { backgroundColor: card.cover_color }
+            }
+          >
             <button className="text-xs px-2 py-1 bg-black/30 hover:bg-black/50 text-white rounded transition-colors flex items-center gap-1">
               <Edit3 size={11} /> Sửa ảnh bìa
             </button>
@@ -457,6 +571,78 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* Attachments */}
+            {(loadingAttachments || cardAttachments.length > 0) && (
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <Paperclip size={16} className="text-[#8C9BAB]" />
+                  <h3 className="text-sm font-semibold text-[#B6C2CF]">Đính kèm</h3>
+                </div>
+                {loadingAttachments ? (
+                  <div className="flex justify-center py-3">
+                    <div className="w-4 h-4 border-2 border-[#0C66E4] border-t-transparent rounded-full animate-spin" />
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {cardAttachments.map((att) => (
+                      <div key={att.id} className="flex items-center gap-3 p-2 bg-[#22272B] rounded-xl group">
+                        {/* Thumbnail or icon */}
+                        {att.file_type?.startsWith('image/') ? (
+                          <img
+                            src={att.file_url}
+                            alt={att.file_name}
+                            className="w-14 h-10 object-cover rounded-lg flex-shrink-0"
+                          />
+                        ) : (
+                          <div className="w-14 h-10 bg-[#2C333A] rounded-lg flex items-center justify-center flex-shrink-0">
+                            <FileText size={18} className="text-[#596773]" />
+                          </div>
+                        )}
+                        {/* Info */}
+                        <div className="flex-1 min-w-0">
+                          <a
+                            href={att.file_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs font-medium text-[#B6C2CF] hover:text-white truncate block transition-colors"
+                          >
+                            {att.file_name}
+                          </a>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-[10px] text-[#596773]">{formatFileSize(att.file_size)}</span>
+                            <span className="text-[10px] text-[#596773]">{formatRelativeTime(att.created_at)}</span>
+                            {att.is_cover && (
+                              <span className="text-[10px] text-blue-400 font-medium">Ảnh bìa</span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3 mt-1">
+                            <button
+                              onClick={() => handleDownload(att)}
+                              disabled={!!downloadingId}
+                              className="flex items-center gap-1 text-[10px] text-[#596773] hover:text-[#B6C2CF] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            >
+                              {downloadingId === att.id ? (
+                                <div className="w-2.5 h-2.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                              ) : (
+                                <Download size={11} />
+                              )}
+                              {downloadingId === att.id ? 'Đang tải...' : 'Tải về'}
+                            </button>
+                            <button
+                              onClick={() => handleDeleteAttachment(att.id)}
+                              className="text-[10px] text-[#596773] hover:text-red-400 transition-colors"
+                            >
+                              Xóa
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -957,6 +1143,37 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
               )}
             </div>
 
+            {/* Attachments upload */}
+            <div>
+              <p className="text-xs font-semibold text-[#8C9BAB] mb-2 uppercase tracking-wide">Đính kèm</p>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.zip"
+                className="hidden"
+                onChange={handleFileUpload}
+              />
+              {uploadError && (
+                <p className="text-[10px] text-red-400 mb-1">{uploadError}</p>
+              )}
+              <button
+                onClick={() => { setUploadError(''); fileInputRef.current?.click() }}
+                disabled={uploadingFile}
+                className="w-full flex items-center gap-2 px-3 py-1.5 bg-[#2C333A] hover:bg-[#38424B] disabled:opacity-50 text-[#B6C2CF] rounded-lg text-xs transition-colors"
+              >
+                {uploadingFile ? (
+                  <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                ) : (
+                  <Paperclip size={13} />
+                )}
+                {uploadingFile ? 'Đang tải lên...' : 'Thêm đính kèm'}
+              </button>
+              {cardAttachments.length > 0 && (
+                <p className="text-[10px] text-[#596773] mt-1">{cardAttachments.length} file đính kèm</p>
+              )}
+            </div>
+
             {/* Due date */}
             <div>
               <p className="text-xs font-semibold text-[#8C9BAB] mb-2 uppercase tracking-wide">Ngày hết hạn</p>
@@ -1041,6 +1258,27 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
           </div>
         </div>
       </div>
+
+      {/* Download toast */}
+      {toast && (
+        <div
+          className={`fixed bottom-6 right-6 z-[60] flex items-center gap-3 px-4 py-3 rounded-xl shadow-2xl text-sm font-medium transition-all animate-fade-in ${
+            toast.type === 'success'
+              ? 'bg-[#1D3A2A] border border-green-700/60 text-green-300'
+              : 'bg-[#3A1D1D] border border-red-700/60 text-red-300'
+          }`}
+        >
+          {toast.type === 'success' ? (
+            <CheckCircle size={16} className="flex-shrink-0 text-green-400" />
+          ) : (
+            <AlertCircle size={16} className="flex-shrink-0 text-red-400" />
+          )}
+          <span className="max-w-xs truncate">{toast.message}</span>
+          <button onClick={() => setToast(null)} className="ml-1 opacity-60 hover:opacity-100 transition-opacity">
+            <X size={14} />
+          </button>
+        </div>
+      )}
     </div>
   )
 }

@@ -39,4 +39,18 @@ module.exports = {
     from: process.env.MAIL_FROM,
   },
   FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:5173',
+  COOKIE_ENCRYPTION_KEY: process.env.COOKIE_ENCRYPTION_KEY,
+  redis: {
+    host: process.env.REDIS_HOST || 'localhost',
+    port: parseInt(process.env.REDIS_PORT, 10) || 6379,
+    password: process.env.REDIS_PASSWORD || 'redispass',
+  },
+  minio: {
+    endpoint: process.env.MINIO_ENDPOINT || 'localhost',
+    port: parseInt(process.env.MINIO_PORT, 10) || 9000,
+    useSSL: process.env.MINIO_USE_SSL === 'true',
+    accessKey: process.env.MINIO_ROOT_USER || 'minioadmin',
+    secretKey: process.env.MINIO_ROOT_PASSWORD || 'minioadmin',
+    bucket: process.env.MINIO_BUCKET || 'taskflow',
+  },
 };

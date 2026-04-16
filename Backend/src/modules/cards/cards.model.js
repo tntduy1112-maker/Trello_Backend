@@ -4,7 +4,8 @@ const findCardsByListId = async (listId) => {
   const result = await query(
     `SELECT c.*,
        COALESCE(m.assignees, '[]') AS assignees,
-       COALESCE(l.labels,    '[]') AS labels
+       COALESCE(l.labels,    '[]') AS labels,
+       (SELECT COUNT(*)::int FROM attachments WHERE card_id = c.id) AS attachment_count
      FROM cards c
      LEFT JOIN LATERAL (
        SELECT json_agg(json_build_object(
@@ -38,7 +39,8 @@ const findCardById = async (id) => {
   const result = await query(
     `SELECT c.*,
        COALESCE(m.assignees, '[]') AS assignees,
-       COALESCE(l.labels,    '[]') AS labels
+       COALESCE(l.labels,    '[]') AS labels,
+       (SELECT COUNT(*)::int FROM attachments WHERE card_id = c.id) AS attachment_count
      FROM cards c
      LEFT JOIN LATERAL (
        SELECT json_agg(json_build_object(

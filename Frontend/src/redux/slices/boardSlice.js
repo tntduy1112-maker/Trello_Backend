@@ -1,7 +1,7 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit'
 import { getBoard } from '../../services/board.service'
 import { getLists, createList } from '../../services/list.service'
-import { getCards, createCard, updateCard as updateCardApi, deleteCard as deleteCardApi, getComments as getCommentsApi, addComment as addCommentApi, updateComment as updateCommentApi, deleteComment as deleteCommentApi } from '../../services/card.service'
+import { getCards, createCard, updateCard as updateCardApi, deleteCard as deleteCardApi, getComments as getCommentsApi, addComment as addCommentApi, updateComment as updateCommentApi, deleteComment as deleteCommentApi, getAttachments as getAttachmentsApi, addAttachment as addAttachmentApi, deleteAttachment as deleteAttachmentApi, toggleAttachmentCover as toggleAttachmentCoverApi } from '../../services/card.service'
 import {
   getBoardLabels,
   createLabel as createLabelApi,
@@ -223,6 +223,57 @@ export const deleteCommentThunk = createAsyncThunk(
   }
 )
 
+// ── Attachments ───────────────────────────────────────────────────────────────
+
+export const fetchCardAttachments = createAsyncThunk(
+  'board/fetchCardAttachments',
+  async (cardId, { rejectWithValue }) => {
+    try {
+      const res = await getAttachmentsApi(cardId)
+      return res.data.data.attachments
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to load attachments')
+    }
+  }
+)
+
+export const addAttachmentThunk = createAsyncThunk(
+  'board/addAttachment',
+  async ({ cardId, listId, formData }, { rejectWithValue }) => {
+    try {
+      const res = await addAttachmentApi(cardId, formData)
+      return { listId, cardId, attachment: res.data.data.attachment }
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to upload attachment')
+    }
+  }
+)
+
+export const deleteAttachmentThunk = createAsyncThunk(
+  'board/deleteAttachment',
+  async ({ cardId, listId, attachmentId }, { rejectWithValue }) => {
+    try {
+      await deleteAttachmentApi(cardId, attachmentId)
+      return { cardId, listId, attachmentId }
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to delete attachment')
+    }
+  }
+)
+
+export const toggleAttachmentCoverThunk = createAsyncThunk(
+  'board/toggleAttachmentCover',
+  async ({ cardId, listId, attachmentId }, { rejectWithValue }) => {
+    try {
+      const res = await toggleAttachmentCoverApi(cardId, attachmentId)
+      const { isCover, coverImageUrl } = res.data.data
+      return { cardId, listId, attachmentId, isCover, coverImageUrl }
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to update cover')
+    }
+  }
+)
+
 export const fetchCardActivity = createAsyncThunk(
   'board/fetchCardActivity',
   async (cardId, { rejectWithValue }) => {
@@ -244,10 +295,12 @@ const initialState = {
   cards: {},
   boardLabels: [],
   cardComments: [],
+  cardAttachments: [],
   cardActivity: [],
   loadingBoard: false,
   loadingLists: false,
   loadingComments: false,
+  loadingAttachments: false,
   loadingActivity: false,
 }
 
@@ -272,8 +325,10 @@ const boardSlice = createSlice({
       state.lists = []
       state.cards = {}
       state.boardLabels = []
+      state.cardAttachments = []
       state.loadingBoard = false
       state.loadingLists = false
+      state.loadingAttachments = false
     },
     moveCard: (state, action) => {
       const { cardId, fromListId, toListId, toIndex } = action.payload
@@ -462,6 +517,53 @@ const boardSlice = createSlice({
           if (parent) parent.replies = (parent.replies || []).filter((r) => r.id !== commentId)
         } else {
           state.cardComments = state.cardComments.filter((c) => c.id !== commentId)
+        }
+      })
+      // Attachments
+      .addCase(fetchCardAttachments.pending, (state) => {
+        state.loadingAttachments = true
+      })
+      .addCase(fetchCardAttachments.fulfilled, (state, action) => {
+        state.loadingAttachments = false
+        state.cardAttachments = action.payload
+      })
+      .addCase(fetchCardAttachments.rejected, (state) => {
+        state.loadingAttachments = false
+        state.cardAttachments = []
+      })
+      .addCase(addAttachmentThunk.fulfilled, (state, action) => {
+        const { listId, cardId, attachment } = action.payload
+        state.cardAttachments.unshift(attachment)
+        // Increment attachment_count on the card
+        if (state.cards[listId]) {
+          const card = state.cards[listId].find((c) => c.id === cardId)
+          if (card) card.attachment_count = (card.attachment_count || 0) + 1
+        }
+      })
+      .addCase(deleteAttachmentThunk.fulfilled, (state, action) => {
+        const { listId, cardId, attachmentId } = action.payload
+        const removed = state.cardAttachments.find((a) => a.id === attachmentId)
+        state.cardAttachments = state.cardAttachments.filter((a) => a.id !== attachmentId)
+        // Decrement attachment_count and clear cover_image_url if needed
+        if (state.cards[listId]) {
+          const card = state.cards[listId].find((c) => c.id === cardId)
+          if (card) {
+            card.attachment_count = Math.max(0, (card.attachment_count || 1) - 1)
+            if (removed?.is_cover) card.cover_image_url = null
+          }
+        }
+      })
+      .addCase(toggleAttachmentCoverThunk.fulfilled, (state, action) => {
+        const { listId, cardId, attachmentId, isCover, coverImageUrl } = action.payload
+        // Update is_cover flag on all attachments
+        state.cardAttachments = state.cardAttachments.map((a) => ({
+          ...a,
+          is_cover: a.id === attachmentId ? isCover : false,
+        }))
+        // Sync cover_image_url onto the card in the board state
+        if (state.cards[listId]) {
+          const card = state.cards[listId].find((c) => c.id === cardId)
+          if (card) card.cover_image_url = coverImageUrl
         }
       })
       // Activity

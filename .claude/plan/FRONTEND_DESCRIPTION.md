@@ -1,304 +1,367 @@
 # TaskFlow — Frontend Description
 
-> **Stack:** React 18 | JavaScript (JSX) | Tailwind CSS | Redux Toolkit | React Query | React DnD
+> **Stack:** React 18 | JavaScript (JSX) | Tailwind CSS | Redux Toolkit | @dnd-kit | Axios
 
 ---
 
 ## Tổng quan
 
-Frontend của **TaskFlow** là SPA (Single Page Application) theo phong cách Kanban board (tương tự Trello). Giao tiếp với Backend qua REST API, hỗ trợ kéo thả, real-time UI update, và quản lý phân quyền theo vai trò.
+Frontend của **TaskFlow** là SPA (Single Page Application) theo phong cách Kanban board. Giao tiếp với Backend qua REST API (`http://localhost:3000/api/v1`), hỗ trợ kéo thả, JWT auto-refresh, và quản lý state bằng Redux Toolkit.
+
+**Không dùng:** TypeScript, React Query, Zustand, React Hook Form, shadcn/ui — toàn bộ dùng plain JavaScript + Redux + useState + Tailwind custom components.
 
 ---
 
-## Kiến trúc thư mục
+## Kiến trúc thư mục (thực tế)
 
 ```
-frontend/
-├── node_modules/
-├── public/
-├── src/
-│   ├── api/                  ← Backend Connection (axios instance, interceptors)
-│   ├── assets/               ← Static Files (hình ảnh, icon, font)
-│   ├── components/           ← Reusable Components
-│   │   ├── layout/           ← AppLayout, AuthLayout, Sidebar, Navbar
-│   │   └── ui/               ← Button, Modal, Avatar, Badge, Dropdown...
-│   ├── context/              ← Global State Management (React Context)
-│   │   ├── AuthContext.jsx
-│   │   └── NotificationContext.jsx
-│   ├── data/                 ← Static Content (constants, mock data, enums)
-│   ├── hooks/                ← Custom Logic (useAuth, useBoard, useDnD...)
-│   ├── pages/                ← Application Pages (route-level components)
-│   │   ├── auth/
-│   │   ├── workspaces/
-│   │   ├── boards/
-│   │   └── profile/
-│   ├── redux/                ← Advanced State Management (Redux Toolkit)
-│   │   ├── store.js
-│   │   └── slices/
-│   │       ├── authSlice.js
-│   │       ├── boardSlice.js
-│   │       └── notificationSlice.js
-│   ├── services/             ← Frontend Logic (API call functions)
-│   │   ├── auth.service.js
-│   │   ├── board.service.js
-│   │   ├── card.service.js
-│   │   └── workspace.service.js
-│   ├── utils/                ← Utility Functions (date format, color, permission)
-│   ├── App.jsx
-│   └── index.html
-├── eslint.config.js
-├── package-lock.json
-└── .gitignore
+Frontend/src/
+├── api/
+│   └── axiosInstance.js      ← Axios + JWT interceptor + token refresh queue
+├── components/
+│   ├── layout/
+│   │   ├── AppLayout.jsx     ← Navbar + Sidebar wrapper
+│   │   ├── AuthLayout.jsx    ← Layout trang auth (centered card)
+│   │   ├── Navbar.jsx        ← Top bar (logo, user menu, notifications)
+│   │   └── Sidebar.jsx       ← Left sidebar (workspace list, navigation)
+│   ├── board/
+│   │   ├── ListColumn.jsx    ← Cột Kanban (sortable + droppable)
+│   │   ├── CardItem.jsx      ← Card rút gọn (draggable)
+│   │   ├── CardDetailModal.jsx ← Modal chi tiết card
+│   │   └── InviteMemberModal.jsx ← Modal mời member vào board
+│   └── ui/
+│       ├── Avatar.jsx        ← Avatar với fallback initials
+│       ├── AvatarStack.jsx   ← Group avatar (+N overflow)
+│       ├── Badge.jsx
+│       ├── Button.jsx
+│       ├── ColorPicker.jsx
+│       ├── Dropdown.jsx
+│       ├── Input.jsx
+│       ├── Modal.jsx
+│       ├── NotificationDropdown.jsx
+│       ├── ProgressBar.jsx
+│       ├── Spinner.jsx
+│       └── Tooltip.jsx
+├── context/
+│   └── AuthContext.jsx       ← (legacy, chưa dùng chính — auth qua Redux)
+├── data/
+│   ├── constants.js          ← PRIORITY_COLOR, ROLE constants
+│   └── mockData.js           ← (giữ lại nhưng không dùng)
+├── hooks/
+│   ├── useAuth.js
+│   ├── useBoard.js
+│   ├── useClickOutside.js
+│   ├── useDebounce.js
+│   └── usePermission.js
+├── pages/
+│   ├── auth/
+│   │   ├── LoginPage.jsx
+│   │   ├── RegisterPage.jsx
+│   │   ├── VerifyEmailPage.jsx
+│   │   ├── ForgotPasswordPage.jsx
+│   │   └── ResetPasswordPage.jsx
+│   ├── workspaces/
+│   │   ├── WorkspacesPage.jsx       ← /home
+│   │   ├── CreateWorkspacePage.jsx  ← /workspaces/new
+│   │   ├── BoardListPage.jsx        ← /workspaces/:slug
+│   │   └── WorkspaceSettingsPage.jsx ← /workspaces/:slug/settings
+│   ├── boards/
+│   │   ├── BoardPage.jsx            ← /board/:boardId (Kanban canvas)
+│   │   └── CreateBoardModal.jsx     ← modal tạo board mới
+│   └── profile/
+│       └── ProfilePage.jsx          ← /profile
+├── redux/
+│   ├── store.js
+│   └── slices/
+│       ├── authSlice.js
+│       ├── workspaceSlice.js
+│       ├── boardSlice.js
+│       └── notificationSlice.js
+├── services/
+│   ├── auth.service.js
+│   ├── workspace.service.js
+│   ├── board.service.js
+│   ├── list.service.js
+│   ├── card.service.js
+│   ├── label.service.js
+│   └── notification.service.js
+├── utils/
+│   └── helpers.js            ← formatDate, formatRelativeTime, isOverdue, getInitials, generateAvatarColor
+├── App.jsx
+└── main.jsx
 ```
 
-### Vai trò từng thư mục
+---
 
-| Thư mục | Vai trò |
+## State Management (thực tế)
+
+Dùng **Redux Toolkit** cho tất cả — không dùng React Query hay Zustand.
+
+```
+Redux Store
+│
+├── authSlice
+│   ├── user                  ← profile object { id, email, full_name, avatar_url }
+│   ├── token                 ← JWT access token (localStorage + Redux)
+│   ├── refreshToken          ← (localStorage)
+│   └── isAuthenticated
+│
+├── workspaceSlice
+│   └── workspaces []         ← danh sách org của user
+│       Thunks: fetchWorkspaces, createWorkspaceThunk,
+│               updateWorkspaceThunk, deleteWorkspaceThunk
+│
+├── boardSlice
+│   ├── currentBoard          ← board đang mở
+│   ├── lists []              ← danh sách lists (ordered by position)
+│   ├── cards {}              ← { [listId]: Card[] }
+│   ├── boardLabels []        ← labels của board hiện tại
+│   ├── cardComments []       ← comments của card đang mở (threaded: top-level có replies[])
+│   ├── cardActivity []       ← activity logs của card đang mở
+│   ├── loadingBoard
+│   ├── loadingLists
+│   ├── loadingComments
+│   └── loadingActivity
+│       Thunks: fetchBoard, fetchBoardLists,
+│               createListThunk, createCardThunk,
+│               saveCardThunk, deleteCardThunk,
+│               fetchBoardLabels, createLabelThunk,
+│               updateLabelThunk, deleteLabelThunk,
+│               addCardLabelThunk, removeCardLabelThunk,
+│               fetchCardComments, addCommentThunk,
+│               editCommentThunk, deleteCommentThunk,
+│               fetchCardActivity
+│
+└── notificationSlice
+    └── notifications []      ← (placeholder, chưa connect API)
+```
+
+### Chiến lược state:
+
+| Loại state | Giải pháp hiện tại |
 |---|---|
-| `api/` | Cấu hình axios, base URL, JWT interceptor, auto refresh token |
-| `assets/` | File tĩnh: ảnh, icon SVG, font |
-| `components/layout/` | Skeleton layout dùng lại (AppLayout, AuthLayout) |
-| `components/ui/` | Atomic UI: Button, Input, Modal, Spinner, Avatar... |
-| `context/` | React Context cho auth session và notification state |
-| `data/` | Hằng số, enums (PRIORITY, ROLE), dữ liệu tĩnh |
-| `hooks/` | Custom hooks bọc logic tái sử dụng |
-| `pages/` | Một component per route, gọi service và render UI |
-| `redux/` | Redux Toolkit store + slices cho state phức tạp |
-| `services/` | Hàm gọi API theo từng domain (gọi từ pages / hooks) |
-| `utils/` | Hàm tiện ích thuần túy (format date, map priority → color) |
+| Server data (API) | Redux Toolkit async thunks |
+| Global UI (auth, workspace, board) | Redux Toolkit slices |
+| Form state | `useState` trong từng component |
+| Local UI state (dropdown, modal open) | `useState` trong từng component |
 
 ---
 
-## Màn hình & Tính năng
-
-### 1. Xác thực (Auth)
-
-| Trang | Route | Mô tả |
-|---|---|---|
-| Đăng nhập | `/login` | Form email + mật khẩu, JWT lưu vào httpOnly cookie hoặc localStorage |
-| Đăng ký | `/register` | Form tạo tài khoản mới |
-| Xác minh email | `/verify-email` | Nhập OTP gửi qua email |
-| Quên mật khẩu | `/forgot-password` | Nhập email để nhận link reset |
-| Đặt lại mật khẩu | `/reset-password` | Nhập mật khẩu mới qua token |
-
----
-
-### 2. Workspace (Organizations)
-
-| Trang | Route | Mô tả |
-|---|---|---|
-| Danh sách workspace | `/` | Trang chủ sau đăng nhập, liệt kê tất cả workspace |
-| Tạo workspace | `/workspaces/new` | Form tạo workspace mới |
-| Cài đặt workspace | `/workspaces/:slug/settings` | Chỉnh tên, logo, quản lý thành viên |
-
-**Components:**
-- `WorkspaceCard` — hiển thị workspace trong danh sách
-- `InviteMemberModal` — mời thành viên qua email
-- `MemberList` — danh sách thành viên + badge role (Owner / Admin / Member)
-- `RoleBadge` — hiển thị role với màu tương ứng
-
----
-
-### 3. Boards
-
-| Trang | Route | Mô tả |
-|---|---|---|
-| Danh sách board | `/workspaces/:slug` | Tất cả board trong workspace |
-| Board detail | `/board/:boardId` | Giao diện Kanban chính |
-| Cài đặt board | `/board/:boardId/settings` | Tên, visibility, members |
-
-**Components:**
-- `BoardCard` — thumbnail board (màu nền hoặc ảnh nền)
-- `CreateBoardModal` — tạo board mới, chọn màu/ảnh nền
-- `BoardHeader` — thanh header board (tên, visibility badge, nút invite)
-- `BoardBackground` — render màu hoặc ảnh nền board
-
----
-
-### 4. Kanban Board (Lists & Cards)
-
-Đây là màn hình trung tâm của ứng dụng.
-
-**Layout:**
-```
-BoardHeader
-└── BoardCanvas (horizontal scroll)
-      ├── ListColumn
-      │     ├── ListHeader (tên + nút archive)
-      │     ├── CardList (droppable)
-      │     │     └── CardItem (draggable)
-      │     └── AddCardButton
-      └── AddListButton
-```
-
-**Drag & Drop:**
-- Kéo thả **card** giữa các list (cập nhật `position` và `list_id`)
-- Kéo thả **list** để sắp xếp lại thứ tự trong board
-- Dùng thư viện `@dnd-kit/core` hoặc `react-beautiful-dnd`
-- Optimistic update: cập nhật UI ngay lập tức, rollback nếu API lỗi
-
-**Components:**
-- `ListColumn` — một cột Kanban
-- `CardItem` — card rút gọn (tiêu đề, cover, label, due date, assignees, priority)
-- `AddCardInline` — thêm card nhanh trực tiếp trong list
-
----
-
-### 5. Card Detail Modal
-
-Mở overlay modal khi click vào card, không navigate sang trang mới.
-
-**Sections trong modal:**
-| Section | Mô tả |
-|---|---|
-| Cover | Hiển thị màu/ảnh bìa, nút đổi cover |
-| Title | Chỉnh sửa inline |
-| Description | Editor Markdown (react-markdown + textarea) |
-| Members | Avatar stacked, nút assign/unassign |
-| Labels | Badge màu, nút thêm/xoá label |
-| Due Date | Date picker + indicator trạng thái (overdue / upcoming / done) |
-| Priority | Dropdown: Low / Medium / High / Critical |
-| Checklists | Accordion từng checklist, progress bar, thêm/xoá item |
-| Attachments | Upload file, thumbnail ảnh, nút set làm cover |
-| Comments | Thread comment, hỗ trợ Markdown, reply lồng nhau |
-| Activity Log | Dòng thời gian các hành động trên card |
-
----
-
-### 6. Labels
-
-- **Label Picker** trong card modal: chọn/bỏ label, tạo label mới với color picker
-- Label hiển thị dưới dạng badge màu trên `CardItem`
-
----
-
-### 7. Checklists
-
-- Thêm nhiều checklist vào một card
-- Mỗi item: checkbox, nội dung, assigned user, due date
-- Progress bar tổng hợp (X/Y items hoàn thành)
-- Kéo thả để sắp xếp item và checklist
-
----
-
-### 8. Comments
-
-- Textarea hỗ trợ Markdown preview
-- Hiển thị thread reply lồng nhau (2 cấp)
-- Nút chỉnh sửa comment (chỉ owner)
-- Relative timestamp (VD: "5 phút trước")
-
----
-
-### 9. Notifications
-
-- **Bell icon** trên navbar với badge số thông báo chưa đọc
-- Dropdown hiển thị danh sách thông báo gần đây
-- Click vào thông báo → navigate tới card/board liên quan
-- Nút "Đánh dấu tất cả đã đọc"
-
----
-
-### 10. Hồ sơ người dùng
-
-| Trang | Route | Mô tả |
-|---|---|---|
-| Profile | `/profile` | Xem và chỉnh sửa thông tin cá nhân |
-| Đổi mật khẩu | `/profile/security` | Form đổi mật khẩu |
-
----
-
-## State Management
-
-| Loại state | Giải pháp |
-|---|---|
-| Server state (API data) | React Query (`useQuery`, `useMutation`) |
-| Global UI state | Zustand (auth session, sidebar open, active board) |
-| Local component state | `useState` / `useReducer` |
-| Form state | React Hook Form + Zod validation |
-
----
-
-## API Integration
-
-- Axios instance với base URL từ env, tự động attach JWT header
-- Interceptor tự động refresh token khi nhận 401
-- React Query làm cache layer, invalidate sau mỗi mutation
-
----
-
-## Routing
+## API Layer
 
 ```
-/                          → Redirect dựa vào auth state
-/login                     → AuthLayout
-/register                  → AuthLayout
-/verify-email              → AuthLayout
-/forgot-password           → AuthLayout
-/reset-password            → AuthLayout
-/home                      → AppLayout — Danh sách workspace
-/workspaces/new            → AppLayout — Tạo workspace
-/workspaces/:slug          → AppLayout — Boards trong workspace
-/workspaces/:slug/settings → AppLayout — Cài đặt workspace
-/board/:boardId            → BoardLayout — Kanban board
-/board/:boardId/settings   → BoardLayout — Cài đặt board
-/profile                   → AppLayout — Profile
+axiosInstance.js
+  ├── baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3000/api/v1'
+  ├── Request interceptor  → thêm Authorization: Bearer <token> từ localStorage
+  └── Response interceptor → khi nhận 401:
+        ├── isRefreshing flag chống gọi refresh nhiều lần
+        ├── failedQueue: queue các request đang chờ
+        ├── Gọi POST /auth/refresh với refreshToken
+        ├── Cập nhật token mới vào localStorage + headers
+        ├── Retry toàn bộ request trong queue
+        └── Nếu refresh thất bại → xóa localStorage → redirect /login
+
+services/ (mỗi file là một domain):
+  auth.service.js        → login, register, verifyEmail, forgotPassword,
+                           resetPassword, refreshToken, getMe, logout
+  workspace.service.js   → getWorkspaces, createWorkspace, updateWorkspace,
+                           deleteWorkspace, getWorkspaceMembers, inviteMember,
+                           updateMemberRole, removeMember
+  board.service.js       → getBoards, getBoard, createBoard, updateBoard,
+                           deleteBoard, getBoardMembers, inviteBoardMember
+  list.service.js        → getLists, createList, updateList, deleteList
+  card.service.js        → getCards, getCard, createCard, updateCard, deleteCard,
+                           getComments, addComment, updateComment, deleteComment
+  label.service.js       → getBoardLabels, createLabel, updateLabel, deleteLabel,
+                           getCardLabels, addCardLabel, removeCardLabel
+  activityLog.service.js → getCardActivity, getBoardActivity
+  notification.service.js → (placeholder)
 ```
 
-Protected routes kiểm tra auth token, redirect về `/login` nếu chưa đăng nhập.
+---
+
+## Routing (thực tế)
+
+```
+App.jsx
+│
+├── PublicRoute (redirect /home nếu đã đăng nhập)
+│   ├── /login              → LoginPage
+│   ├── /register           → RegisterPage
+│   ├── /verify-email       → VerifyEmailPage
+│   ├── /forgot-password    → ForgotPasswordPage
+│   └── /reset-password     → ResetPasswordPage
+│
+├── /                       → <Navigate to="/home" />
+│
+├── ProtectedRoute (redirect /login nếu chưa đăng nhập)
+│   ├── /home               → WorkspacesPage
+│   ├── /workspaces/new     → CreateWorkspacePage
+│   ├── /workspaces/:slug   → BoardListPage
+│   ├── /workspaces/:slug/settings → WorkspaceSettingsPage
+│   ├── /board/:boardId     → BoardPage
+│   └── /profile            → ProfilePage
+│
+└── *                       → <Navigate to="/home" />
+```
 
 ---
 
-## Phân quyền UI
+## Màn hình & Trạng thái
 
-- Ẩn/disable button dựa trên role của user trong workspace/board
-- Hook `usePermission(resource, action)` trả về `boolean`
-- Không render component nếu không có quyền (VD: ẩn "Delete Board" với member)
+### 1. Auth Pages ✅ Hoàn thành
+
+| Trang | Route | Trạng thái | Ghi chú |
+|---|---|:---:|---|
+| Đăng nhập | `/login` | ✅ | Lưu accessToken + refreshToken + user vào localStorage + Redux |
+| Đăng ký | `/register` | ✅ | Gửi `fullName` (camelCase theo yêu cầu backend), redirect sang verify |
+| Xác minh email | `/verify-email` | ✅ | Nhận email từ `location.state`, gọi `POST /auth/verify-email` |
+| Quên mật khẩu | `/forgot-password` | ✅ | Gửi email reset |
+| Đặt lại mật khẩu | `/reset-password` | ✅ | Đọc token từ `useSearchParams` |
 
 ---
 
-## Kế hoạch triển khai (theo giai đoạn)
+### 2. Workspace Pages ✅ Hoàn thành
 
-### Phase 1 — Auth & Workspace
-- [ ] Setup project (Vite + React + TypeScript + Tailwind)
-- [ ] Auth pages (login, register, verify email, forgot/reset password)
-- [ ] Workspace list & create
-- [ ] Invite member modal
+| Trang | Route | Trạng thái |
+|---|---|:---:|
+| Danh sách workspace | `/home` | ✅ |
+| Tạo workspace | `/workspaces/new` | ✅ |
+| Danh sách board | `/workspaces/:slug` | ✅ |
+| Cài đặt workspace | `/workspaces/:slug/settings` | ✅ |
 
-### Phase 2 — Board & Kanban
-- [ ] Board list page
-- [ ] Kanban board layout (lists + cards)
-- [ ] Drag & drop lists và cards
-- [ ] Create/archive list & card
+**Chi tiết WorkspaceSettingsPage:**
+- Tab **Chung:** cập nhật tên, mô tả → `PUT /organizations/:id`
+- Tab **Thành viên:** bảng members, inline invite form (email + role picker), đổi role, xoá member
+- Vùng nguy hiểm: xoá workspace → `DELETE /organizations/:id` → navigate `/home`
 
-### Phase 3 — Card Detail
-- [ ] Card detail modal
-- [ ] Labels, Members, Due Date, Priority
+**Lưu ý routing:** URL dùng `slug` (vd: `my-team`), nhưng API dùng UUID. Giải pháp: lưu full object vào Redux → tìm workspace bằng `workspaces.find(w => w.slug === slug)` → dùng `workspace.id` cho API calls.
+
+---
+
+### 3. Board Pages ✅ Hoàn thành
+
+| Trang | Route | Trạng thái |
+|---|---|:---:|
+| Danh sách board | `/workspaces/:slug` | ✅ (trong BoardListPage) |
+| Kanban board | `/board/:boardId` | ✅ |
+
+**BoardPage — Luồng tải:**
+```
+mount → dispatch(clearBoard())
+      → dispatch(fetchBoard(boardId))       [song song]
+      → dispatch(fetchBoardLists(boardId))  [song song]
+      → getBoardMembers(boardId)            [song song]
+```
+
+**BoardPage — DnD với @dnd-kit:**
+- `DndContext` bọc toàn bộ board canvas
+- `SortableContext` + `horizontalListSortingStrategy` cho list reorder
+- `SortableContext` + `verticalListSortingStrategy` cho card reorder trong mỗi list
+- `DragOverlay` hiển thị ghost card khi đang kéo (rotate 3deg, scale 1.05)
+- `onDragOver`: xử lý move card giữa 2 list khác nhau (optimistic update Redux)
+- `onDragEnd`: xử lý reorder cuối cùng
+- ⚠️ **Chưa persist**: vị trí sau khi kéo chưa được ghi vào DB
+
+---
+
+### 4. Card Detail Modal ✅ Core, ⏳ Một phần
+
+Mở overlay modal khi click vào `CardItem`, không navigate sang trang mới.
+
+**Sections đã implement:**
+
+| Section | Trạng thái | Ghi chú |
+|---|:---:|---|
+| Cover (màu bìa) | ✅ | Hiển thị nếu `card.cover_color` có giá trị |
+| Title | ✅ | Edit inline, `onBlur` dispatch `updateCard` vào Redux |
+| Description | ✅ | Textarea, `border-red-500` khi `descError`, click ngoài để edit |
+| Single Assignee | ✅ | Dropdown chọn 1 member từ boardMembers, `UserX` để bỏ assign |
+| Labels | ✅ | Picker đầy đủ: tạo nhãn (tên + 10 màu), toggle assign/unassign, edit tên/màu inline, xoá nhãn khỏi board |
+| Due Date | ✅ | `<input type="date">`, đỏ khi `isOverdue()` |
+| Priority | ✅ | 4 options (Low/Medium/High/Critical), highlight lựa chọn hiện tại |
+| Checklists | ⏳ | Hiển thị nếu `card.checklist_progress` có, chưa có API |
+| Comments | ✅ | Tab "Bình luận": tạo mới, reply (1 cấp), edit inline (tác giả), xóa, spinner states, "(đã sửa)" |
+| Activity Log | ✅ | Tab "Hoạt động": load từ Redux `cardActivity`, mô tả tiếng Việt, avatar, relative time |
+
+**Nút "Lưu trữ card" (save flow):**
+```
+Click "Lưu trữ card"
+  → validate description.trim() !== ''
+  → nếu rỗng: setDescError('Mô tả không được để trống') → highlight border đỏ
+  → nếu hợp lệ: dispatch(saveCardThunk({ cardId, listId, data }))
+      data = { title, description, priority, dueDate, assigneeId }
+      → loading spinner trên button
+      → success: cập nhật Redux, đóng modal
+      → error: hiển thị saveError
+```
+
+**Nút "Xóa card":** dispatch `deleteCardThunk` → API `DELETE /cards/:cardId` → xoá khỏi Redux → đóng modal.
+
+**Single Assignee logic:**
+```
+boardMembers (từ props, fetch từ GET /boards/:boardId/members)
+  → Dropdown hiển thị tất cả members
+  → Chọn member đang chọn → bỏ assign (toggle off)
+  → Chọn member khác → thay thế
+  → Click outside → đóng dropdown (useRef + document.addEventListener)
+```
+
+---
+
+### 5. Profile Page ✅ Hoàn thành
+
+- Hiển thị thông tin user từ Redux (`user.full_name`, `user.email`, `user.created_at`)
+- Cập nhật tên → dispatch `updateCurrentUser` → cập nhật Redux local (chưa có `PUT /auth/me` API)
+- Đổi mật khẩu → redirect sang `/forgot-password` flow
+- Đăng xuất → `POST /auth/logout` → xóa localStorage → dispatch `logout` → redirect `/login`
+
+---
+
+## Kế hoạch triển khai (cập nhật)
+
+### Phase 1 — Auth & Workspace ✅ Hoàn thành
+- [x] Auth pages (5 trang)
+- [x] Workspace list, create, settings
+- [x] Invite member vào workspace
+- [x] Kết nối toàn bộ API thật (bỏ mock data)
+
+### Phase 2 — Board & Kanban 🔄 Đang thực hiện
+- [x] Board list, create board modal
+- [x] Kanban board layout (lists + cards từ API)
+- [x] Drag & drop lists và cards (UI)
+- [x] Tạo list, tạo card qua API
+- [x] Card detail modal (core: title, desc, priority, due date, assignee)
+- [x] Save card xuống DB với validation
+- [ ] **Persist DnD position vào DB** (gọi PUT sau `onDragEnd`)
+- [x] Labels & label picker (tạo, toggle assign, edit, xoá)
+
+### Phase 3 — Advanced Card Features 🔄 Đang thực hiện
+- [x] Comments API + UI (tạo, reply, edit, xóa — kết nối API thật)
+- [x] Activity log trên card (tab Hoạt động trong CardDetailModal)
 - [ ] Checklists & checklist items
 - [ ] Attachments upload
 
-### Phase 4 — Comments & Notifications
-- [ ] Comment thread (Markdown + reply)
-- [ ] Notification bell + dropdown
-- [ ] Activity log trên card
+### Phase 4 — Notifications ⏳
+- [ ] Notification bell + dropdown (UI placeholder đã có)
+- [ ] Connect notification API
 
 ---
 
-## Công nghệ sử dụng
+## Công nghệ sử dụng (thực tế)
 
-| Thành phần | Công nghệ |
-|---|---|
-| Framework | React 18 + TypeScript |
-| Build tool | Vite |
-| Styling | Tailwind CSS |
-| UI Components | shadcn/ui hoặc Radix UI |
-| Server state | React Query (TanStack Query v5) |
-| Global state | Zustand |
-| Forms | React Hook Form + Zod |
-| Drag & Drop | @dnd-kit/core |
-| Markdown | react-markdown + remark-gfm |
-| HTTP Client | Axios |
-| Routing | React Router v6 |
-| Icons | Lucide React |
-| Date handling | date-fns |
-| Container | Docker / Nginx |
+| Thành phần | Công nghệ | Phiên bản |
+|---|---|---|
+| Framework | React | 18.3.1 |
+| Language | JavaScript (JSX) — không dùng TypeScript | — |
+| Build tool | Vite | 6.0.5 |
+| Styling | Tailwind CSS | 3.4.17 |
+| UI Components | Custom Tailwind (không dùng shadcn/Radix) | — |
+| Global state | Redux Toolkit | 2.3.0 |
+| Server state | Redux Toolkit async thunks (không dùng React Query) | — |
+| Forms | `useState` (không dùng React Hook Form) | — |
+| Drag & Drop | @dnd-kit/core + @dnd-kit/sortable | 6.x / 8.x |
+| HTTP Client | Axios | 1.7.9 |
+| Routing | React Router | 7.1.1 |
+| Icons | Lucide React | 0.469.0 |
+| Date handling | Custom helpers (không dùng date-fns) | — |

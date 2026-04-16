@@ -1,16 +1,21 @@
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const env = require('../configs/env');
 
 const generateAccessToken = (payload) => {
-  return jwt.sign(payload, env.jwt.accessSecret, {
-    expiresIn: env.jwt.accessExpires,
-  });
+  return jwt.sign(
+    { ...payload, jti: crypto.randomUUID() },
+    env.jwt.accessSecret,
+    { expiresIn: env.jwt.accessExpires }
+  );
 };
 
 const generateRefreshToken = (payload) => {
-  return jwt.sign(payload, env.jwt.refreshSecret, {
-    expiresIn: env.jwt.refreshExpires,
-  });
+  return jwt.sign(
+    { ...payload, jti: crypto.randomUUID() },
+    env.jwt.refreshSecret,
+    { expiresIn: env.jwt.refreshExpires }
+  );
 };
 
 const verifyAccessToken = (token) => {

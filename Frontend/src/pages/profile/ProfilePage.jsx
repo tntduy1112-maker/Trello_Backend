@@ -57,8 +57,7 @@ export default function ProfilePage() {
 
   const handleLogout = async () => {
     try {
-      const refreshToken = localStorage.getItem('refreshToken')
-      if (refreshToken) await logoutService({ refreshToken })
+      await logoutService()
     } catch {
       // ignore logout errors
     } finally {

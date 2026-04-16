@@ -40,9 +40,15 @@ export default function CardItem({ card, listId, onClick }) {
           : 'border-[#2C333A] hover:border-[#454F59]'
       }`}
     >
-      {/* Cover */}
-      {card.cover_color && (
-        <div className="h-8 w-full" style={{ backgroundColor: card.cover_color }} />
+      {/* Cover — color or image attachment */}
+      {(card.cover_image_url || card.cover_color) && (
+        <div
+          className="h-8 w-full bg-cover bg-center"
+          style={card.cover_image_url
+            ? { backgroundImage: `url(${card.cover_image_url})` }
+            : { backgroundColor: card.cover_color }
+          }
+        />
       )}
 
       <div className="p-3">
@@ -116,6 +122,14 @@ export default function CardItem({ card, listId, onClick }) {
             }`}>
               <CheckSquare size={11} />
               {card.checklist_progress.completed}/{card.checklist_progress.total}
+            </span>
+          )}
+
+          {/* Attachment count */}
+          {card.attachment_count > 0 && (
+            <span className="flex items-center gap-1 text-[10px] text-[#8C9BAB]">
+              <Paperclip size={11} />
+              {card.attachment_count}
             </span>
           )}
 

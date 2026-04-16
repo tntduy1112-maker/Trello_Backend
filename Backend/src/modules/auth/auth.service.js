@@ -11,12 +11,18 @@ const {
   createEmailVerification,
   findEmailVerification,
   markEmailVerificationUsed,
+  addToBlacklist,
+  invalidateAllUserTokens,
 } = require('./auth.model');
 const { hashPassword, comparePassword } = require('../../utils/bcrypt');
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../../utils/jwt');
 const { sendVerificationEmail, sendPasswordResetEmail } = require('../../utils/email');
 
 const generateOTP = () => String(Math.floor(100000 + Math.random() * 900000));
+
+// Hash a refresh token with SHA-256 before storing/looking up in DB.
+// The raw token goes to the client; only the hash lives in the database.
+const hashToken = (raw) => crypto.createHash('sha256').update(raw).digest('hex');
 
 const register = async (email, password, fullName) => {
   const existing = await findUserByEmail(email);
@@ -125,7 +131,7 @@ const login = async (email, password, deviceInfo) => {
   const decoded = verifyRefreshToken(refreshTokenValue);
   const expiresAt = new Date(decoded.exp * 1000).toISOString();
 
-  await createRefreshToken(user.id, refreshTokenValue, expiresAt, deviceInfo);
+  await createRefreshToken(user.id, hashToken(refreshTokenValue), expiresAt, deviceInfo);
 
   const { password_hash, ...safeUser } = user;
   return { accessToken, refreshToken: refreshTokenValue, user: safeUser };
@@ -141,12 +147,24 @@ const refreshToken = async (token) => {
     throw err;
   }
 
-  const stored = await findRefreshToken(token);
-  if (!stored || stored.is_revoked) {
-    const err = new Error('Refresh token has been revoked');
+  const stored = await findRefreshToken(hashToken(token));
+
+  if (!stored) {
+    const err = new Error('Refresh token not found');
     err.statusCode = 401;
     throw err;
   }
+
+  // ── Reuse detection ────────────────────────────────────────────────────────
+  // A revoked RT being presented means it was stolen — nuke all sessions
+  if (stored.is_revoked) {
+    await revokeAllUserTokens(stored.user_id);
+    await invalidateAllUserTokens(stored.user_id);
+    const err = new Error('Security alert: token reuse detected. All sessions have been invalidated.');
+    err.statusCode = 401;
+    throw err;
+  }
+
   if (new Date(stored.expires_at) < new Date()) {
     const err = new Error('Refresh token has expired');
     err.statusCode = 401;
@@ -160,13 +178,31 @@ const refreshToken = async (token) => {
     throw err;
   }
 
+  // ── Rotation: revoke old RT, issue new RT ──────────────────────────────────
+  await revokeRefreshToken(hashToken(token));
+
   const payload = { userId: user.id, email: user.email };
   const accessToken = generateAccessToken(payload);
-  return { accessToken };
+  const newRefreshToken = generateRefreshToken(payload);
+
+  const newDecoded = verifyRefreshToken(newRefreshToken);
+  const expiresAt = new Date(newDecoded.exp * 1000).toISOString();
+  await createRefreshToken(user.id, hashToken(newRefreshToken), expiresAt, stored.device_info);
+
+  return { accessToken, newRefreshToken };
 };
 
-const logout = async (token) => {
-  await revokeRefreshToken(token);
+const logout = async (token, accessTokenDecoded) => {
+  await revokeRefreshToken(hashToken(token));
+  // Blacklist the current access token so it can't be reused during its remaining TTL
+  if (accessTokenDecoded?.jti && accessTokenDecoded?.userId && accessTokenDecoded?.exp) {
+    await addToBlacklist(
+      accessTokenDecoded.jti,
+      accessTokenDecoded.userId,
+      'logout',
+      new Date(accessTokenDecoded.exp * 1000).toISOString()
+    ).catch(() => {}); // non-blocking — don't fail logout if blacklist insert fails
+  }
 };
 
 const logoutAll = async (userId) => {
@@ -209,6 +245,7 @@ const resetPassword = async (token, newPassword) => {
   await markEmailVerificationUsed(record.id);
   await updateUser(record.user_id, { password_hash: passwordHash });
   await revokeAllUserTokens(record.user_id);
+  await invalidateAllUserTokens(record.user_id); // invalidate any in-flight access tokens
 };
 
 module.exports = {

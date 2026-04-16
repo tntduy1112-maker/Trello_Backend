@@ -35,21 +35,23 @@ These are the core bets behind the product decisions.
 ### H1 — Kanban reduces cognitive load
 **Hypothesis:** Visualizing work as cards in columns (To Do / In Progress / Done) is more intuitive than a flat task list, reducing the time users spend deciding what to work on next.
 
-**How to validate:** Track time-to-first-action after opening the board. Track how often users reorder or move cards within the first session.
+**Current state:** Board canvas with DnD lists and cards is working end-to-end. Cards persist to DB.
 
 ---
 
 ### H2 — Multi-workspace isolation increases adoption within organizations
 **Hypothesis:** Teams adopt the tool more broadly when each team or project can have its own workspace with independent membership — they do not want a monolithic single workspace shared by everyone.
 
-**How to validate:** Measure if organizations create more than one workspace. Measure cross-workspace membership rates.
+**Current state:** Workspace (Organization) CRUD fully implemented. Members can be invited by email and given roles.
 
 ---
 
 ### H3 — Card-level details (checklist, due date, priority, assignee) reduce follow-up messages
 **Hypothesis:** When all task context lives on the card itself, team members send fewer "what's the status?" messages because the card surface answers those questions directly.
 
-**How to validate:** Compare comment volume on cards that have complete metadata (assignee + due date + checklist) vs. cards that don't.
+**Current state:** Title, description, priority, due date, single assignee, labels, and comments are implemented and persist to DB. Checklists are not yet implemented.
+
+**Design decision — single assignee:** Each card has exactly **one assignee** at a time (not multi-assign). This makes ownership unambiguous — someone is responsible or no one is. Multi-assign was considered but rejected as it dilutes accountability ("everyone's responsible = no one is").
 
 ---
 
@@ -58,12 +60,14 @@ These are the core bets behind the product decisions.
 
 **Technical implication:** Card A at position 1.0, Card B at position 2.0 → inserting between them sets position 1.5. Only one write. No batch update.
 
+**Current state:** Position is stored as FLOAT in both `lists` and `cards` tables. DnD reordering works in the UI (via @dnd-kit) but the new position is **not yet persisted to DB** — page refresh resets order. Persisting DnD is the next step.
+
 ---
 
 ### H5 — Notifications reduce missed deadlines without requiring polling behavior
 **Hypothesis:** Push notifications for due-date reminders and card assignments shift users from reactive checking to proactive awareness, reducing overdue tasks.
 
-**How to validate:** Track the rate of cards completed before due date for users with notifications enabled vs. disabled.
+**Current state:** Not yet implemented. Due date field exists on cards and is editable. The `notifications` table exists in the schema but no API or triggers are wired up.
 
 ---
 
@@ -84,10 +88,10 @@ Board role (owner / admin / member / viewer)
 
 **Visibility overrides:**
 - `private` → only board members can see it
-- `workspace` → all workspace members can view it (read-only unless they are board members)
+- `workspace` → all workspace members can view it
 - `public` → anyone with the link can view it
 
-**Why this matters:** Teams want to share some boards openly (e.g., a roadmap board) while keeping others restricted (e.g., a hiring board).
+**Current state:** Fully implemented and enforced in service layer for all resources (boards, lists, cards). Every API endpoint checks `board_members` before allowing mutations.
 
 ---
 
@@ -96,12 +100,14 @@ Board role (owner / admin / member / viewer)
 Each card has an implicit state defined by which list it lives in. The lists themselves define the workflow stages — TaskFlow imposes no hardcoded stages. Teams define their own (e.g., `Backlog → In Design → In Dev → QA → Done`).
 
 ```
-Card state = list it belongs to
-Card progress = is_completed flag + checklist completion %
-Card urgency  = priority + due_date proximity
+Card state    = list it belongs to       ✅ implemented
+Card progress = is_completed flag         ✅ field exists, UI checkbox pending
+              + checklist completion %    ⏳ not yet implemented
+Card urgency  = priority (low/med/high/critical) + due_date proximity  ✅ implemented
+Card owner    = single assignee (card_members, max 1)                  ✅ implemented
 ```
 
-**Logic for "overdue":** A card is overdue when `due_date < NOW()` AND `is_completed = false`. This is computed at query time — not stored — to avoid stale data.
+**Logic for "overdue":** A card is overdue when `due_date < NOW()` AND `is_completed = false`. Computed at display time on the frontend (`isOverdue()` helper) — not stored — to avoid stale data.
 
 ---
 
@@ -117,9 +123,32 @@ This is stored as a FLOAT. After many reorders the gap between positions can bec
 
 **Why FLOAT over integer:** With integer positions, inserting between positions 3 and 4 requires shifting all items ≥ 4 up by 1. With FLOAT, one write is enough.
 
+**Current state (partial):** DnD works visually using @dnd-kit (card reorder within list, card move between lists, list reorder). Redux state updates optimistically. However, the new position is **not yet written back to the DB** — reloading the page will reset the order to the original DB order. Next step: call `PUT /cards/:cardId` and `PUT /lists/:listId` with the computed new position on `onDragEnd`.
+
 ---
 
-### 4.4 Activity Log Logic
+### 4.4 Card Save Flow
+
+The card detail modal follows a deliberate two-phase save model:
+
+```
+Phase 1 — Optimistic local updates (instant feedback):
+  - Edit title inline → dispatches updateCard to Redux immediately
+  - Change priority → dispatches updateCard to Redux immediately
+  - Change due date → dispatches updateCard to Redux immediately
+  - Select assignee → dispatches updateCard to Redux immediately
+
+Phase 2 — Explicit DB save ("Lưu trữ card" button):
+  - Validates: description must not be empty
+  - Calls PUT /cards/:cardId with { title, description, priority, dueDate, assigneeId }
+  - On success: updates Redux with server response, closes modal
+```
+
+**Design rationale:** The explicit save button gives users control over when their changes are committed, avoiding accidental half-edits being saved. Description is required at save time to ensure cards always have meaningful content before being persisted.
+
+---
+
+### 4.5 Activity Log Logic
 
 Every mutation triggers an activity log entry. The log is append-only and stores:
 - **who** acted (`user_id`)
@@ -129,9 +158,11 @@ Every mutation triggers an activity log entry. The log is append-only and stores
 
 **Why denormalize `board_id` on activity_logs:** Fetching the activity timeline for a board would otherwise require joining through cards → lists → boards for every log entry. The redundant `board_id` makes the board-level activity feed query O(1) instead of O(n joins).
 
+**Current state:** ✅ Fully implemented. `activityLogger.js` utility hooked into `cards.service` (card.created/updated/deleted), `lists.service` (list.created/deleted), and `comments.service` (comment.added). Two read endpoints: `GET /boards/:boardId/activity` and `GET /cards/:cardId/activity`. CardDetailModal shows an **Activity tab** alongside the Comments tab.
+
 ---
 
-### 4.5 Notification Trigger Logic
+### 4.6 Notification Trigger Logic
 
 Notifications are generated by server-side events, not by polling. The trigger rules:
 
@@ -142,42 +173,50 @@ Notifications are generated by server-side events, not by polling. The trigger r
 | User @mentioned in comment | The mentioned user |
 | Card due date approaching | All assignees of that card (N minutes before, configurable via `due_reminder`) |
 
-**Read state logic:** Each notification has an `is_read` flag per user. "Mark all as read" sets `is_read = true` for all records where `user_id = current_user AND is_read = false`. This is a bulk update — efficient with the `(user_id, is_read)` composite index.
+**Read state logic:** Each notification has an `is_read` flag per user. "Mark all as read" sets `is_read = true` for all records where `user_id = current_user AND is_read = false`.
+
+**Current state:** Table exists in schema. Not yet implemented.
 
 ---
 
-### 4.6 Authentication Token Logic
+### 4.7 Authentication Token Logic
 
 ```
 Login → issue Access Token (short-lived, 15min) + Refresh Token (long-lived, stored in DB)
 API call → send Access Token in Authorization header
-Access Token expires → call /refresh with Refresh Token → get new Access Token
+Access Token expires → Axios interceptor auto-calls /refresh → gets new Access Token
+               └── other in-flight requests are queued until refresh completes
 Logout (one device) → revoke that device's Refresh Token (is_revoked = true)
 Logout (all devices) → revoke all Refresh Tokens for that user_id
 ```
 
 **Why store Refresh Token in DB:** Stateless JWTs cannot be invalidated before expiry. Storing the token in `refresh_tokens` with an `is_revoked` flag gives us the ability to force-logout compromised sessions.
 
+**Current state:** Fully implemented. Token refresh with request queue is wired in `axiosInstance.js` — multiple simultaneous 401s trigger only one refresh call; other requests wait and retry automatically.
+
 ---
 
 ## 5. Key User Flows
 
-### Flow 1 — New team onboarding
-1. Owner registers and creates a workspace
-2. Owner invites teammates via email → they receive invite → join workspace
-3. Owner creates a board → adds members → creates lists → creates first cards
+### Flow 1 — New team onboarding ✅ Working end-to-end
+1. Owner registers → verifies email via OTP
+2. Owner creates a workspace → invites teammates via email → they join
+3. Owner creates a board → invites board members → creates lists → creates first cards
 
-### Flow 2 — Daily work cycle
-1. Contributor opens board → sees their assigned cards (filtered by assignee)
-2. Picks the highest priority card → opens modal → reads description and checklist
-3. Moves card to "In Progress" → works → ticks off checklist items
-4. Moves card to "Done" when complete → marks `is_completed = true`
+### Flow 2 — Daily work cycle ✅ Core working, checklist pending
+1. Contributor opens board → sees all cards per list
+2. Clicks a card → opens detail modal → reads description
+3. Updates priority, due date, assignee in the sidebar
+4. Fills in description → clicks "Lưu trữ card" → saved to DB
+5. Comments on card, replies to teammates, edits/deletes own comments ✅
+6. ~~Ticks off checklist items~~ (not yet implemented)
+7. ~~Moves card to Done via drag-and-drop~~ (DnD works visually, not persisted yet)
 
-### Flow 3 — Reviewing progress (Team Lead)
-1. Opens board → scans lists for cards stuck in "In Progress" too long
-2. Checks overdue cards (due_date past + not completed)
-3. Opens activity log to see recent changes
-4. Comments on blocked card to unblock it → assignee gets notified
+### Flow 3 — Reviewing progress (Team Lead) ✅ Core working
+1. Opens board → scans lists ✅
+2. Checks overdue cards (highlighted in red on due date) ✅
+3. Opens card → switches to **Hoạt động** tab → sees full change history ✅
+4. Comments on blocked card → teammates see comment in modal ✅
 
 ---
 
@@ -210,7 +249,29 @@ Logout (all devices) → revoke all Refresh Tokens for that user_id
 |---|---|---|---|
 | Position ordering | FLOAT | Integer with reorder | O(1) insert without batch updates |
 | Auth token storage | DB-backed Refresh Token | Stateless JWT only | Need ability to revoke sessions |
+| Token refresh race condition | `isRefreshing` flag + request queue | Retry each request independently | Avoid calling `/refresh` N times simultaneously |
 | Permission model | Two-layer (workspace + board) | Single layer | Teams need board-level control independent of workspace membership |
 | Activity log | Append-only JSONB metadata | Event sourcing / separate audit DB | Simpler, sufficient for current scale |
 | Notification delivery | In-app only (Phase 1) | Email + in-app | Reduces email infrastructure complexity at MVP stage |
 | Board visibility | private / workspace / public | Binary private/public only | Common request: "share roadmap but keep team board private" |
+| Card assignee | Single assignee only | Multi-assign | Unambiguous ownership — one person is responsible |
+| Card save trigger | Explicit "Lưu trữ card" button | Auto-save on every field change | Prevent accidental partial saves; description required before commit |
+
+---
+
+## 9. Implementation Status
+
+| Feature | Backend | Frontend |
+|---|:---:|:---:|
+| Auth (register, login, OTP, reset) | ✅ | ✅ |
+| Workspace CRUD + member management | ✅ | ✅ |
+| Board CRUD + member management | ✅ | ✅ |
+| Lists CRUD | ✅ | ✅ |
+| Cards CRUD (title, desc, priority, due date, assignee) | ✅ | ✅ |
+| Drag & Drop (UI visual reorder) | — | ✅ |
+| Drag & Drop (persist position to DB) | ✅ ready | ⏳ not wired |
+| Comments (threaded, edit, delete, reply) | ✅ | ✅ |
+| Labels | ✅ | ✅ |
+| Activity Logs (card + board feed) | ✅ | ✅ |
+| Checklists | ⏳ | ⏳ |
+| Notifications | ⏳ | ⏳ |

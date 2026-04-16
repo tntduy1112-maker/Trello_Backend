@@ -5,6 +5,7 @@ const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api/v1'
 const api = axios.create({
   baseURL: BASE_URL,
   headers: { 'Content-Type': 'application/json' },
+  withCredentials: true, // send httpOnly refreshToken cookie automatically
 })
 
 let isRefreshing = false
@@ -48,16 +49,8 @@ api.interceptors.response.use(
       originalRequest._retry = true
       isRefreshing = true
 
-      const refreshToken = localStorage.getItem('refreshToken')
-      if (!refreshToken) {
-        localStorage.removeItem('token')
-        localStorage.removeItem('user')
-        window.location.href = '/login'
-        return Promise.reject(error)
-      }
-
       try {
-        const res = await axios.post(`${BASE_URL}/auth/refresh`, { refreshToken })
+        const res = await axios.post(`${BASE_URL}/auth/refresh`, {}, { withCredentials: true })
         const { accessToken } = res.data.data
         localStorage.setItem('token', accessToken)
         api.defaults.headers.Authorization = `Bearer ${accessToken}`
@@ -67,7 +60,6 @@ api.interceptors.response.use(
       } catch (refreshError) {
         processQueue(refreshError, null)
         localStorage.removeItem('token')
-        localStorage.removeItem('refreshToken')
         localStorage.removeItem('user')
         window.location.href = '/login'
         return Promise.reject(refreshError)

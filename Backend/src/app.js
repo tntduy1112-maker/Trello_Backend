@@ -1,6 +1,9 @@
 const env = require('./configs/env');
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
+require('./configs/redis'); // initialise Redis connection on startup
+const { initBucket } = require('./configs/minio'); // initialise MinIO bucket on startup
 const authRouter = require('./modules/auth/auth.route');
 const orgRouter = require('./modules/organizations/organizations.route');
 const { orgBoardsRouter, boardRouter } = require('./modules/boards/boards.route');
@@ -9,6 +12,7 @@ const { listCardsRouter, cardRouter } = require('./modules/cards/cards.route');
 const { boardLabelsRouter, labelRouter, cardLabelsRouter } = require('./modules/labels/labels.route');
 const { boardActivityRouter, cardActivityRouter } = require('./modules/activityLogs/activityLogs.route');
 const { cardCommentsRouter, commentRouter } = require('./modules/comments/comments.route');
+const { cardAttachmentsRouter } = require('./modules/attachments/attachments.route');
 const invitationsRouter = require('./modules/invitations/invitations.route');
 const { error } = require('./utils/response');
 
@@ -24,6 +28,7 @@ app.use(cors({
 }));
 
 app.use(express.json());
+app.use(cookieParser());
 
 // Swagger — only enabled in development
 if (env.SWAGGER_ENABLED) {
@@ -50,6 +55,7 @@ app.use('/api/v1/boards/:boardId/activity', boardActivityRouter);
 app.use('/api/v1/cards/:cardId/activity', cardActivityRouter);
 app.use('/api/v1/cards/:cardId/comments', cardCommentsRouter);
 app.use('/api/v1/comments/:commentId', commentRouter);
+app.use('/api/v1/cards/:cardId/attachments', cardAttachmentsRouter);
 app.use('/api/v1/invitations', invitationsRouter);
 
 app.get('/health', (req, res) => {
@@ -67,8 +73,9 @@ app.use((err, req, res, next) => {
   return error(res, message, statusCode);
 });
 
-app.listen(env.PORT, () => {
+app.listen(env.PORT, async () => {
   console.log(`TaskFlow API running on port ${env.PORT} [${env.NODE_ENV}]`);
+  await initBucket().catch((err) => console.error('[MinIO] Startup init failed:', err.message));
 });
 
 module.exports = app;

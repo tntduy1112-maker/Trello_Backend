@@ -1,6 +1,8 @@
 const authService = require('./auth.service');
 const { findUserById } = require('./auth.model');
 const { success, error } = require('../../utils/response');
+const { encrypt, decrypt } = require('../../utils/tokenCrypto');
+const { verifyAccessToken } = require('../../utils/jwt');
 
 const register = async (req, res, next) => {
   try {
@@ -34,12 +36,20 @@ const resendVerification = async (req, res, next) => {
   }
 };
 
+const COOKIE_OPTS = {
+  httpOnly: true,
+  sameSite: 'lax',
+  secure: process.env.NODE_ENV === 'production',
+  maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+};
+
 const login = async (req, res, next) => {
   try {
     const { email, password } = req.body;
     const deviceInfo = req.headers['user-agent'] || null;
-    const result = await authService.login(email, password, deviceInfo);
-    return success(res, result, 'Login successful');
+    const { accessToken, refreshToken, user } = await authService.login(email, password, deviceInfo);
+    res.cookie('refreshToken', encrypt(refreshToken), COOKIE_OPTS);
+    return success(res, { accessToken, user }, 'Login successful');
   } catch (err) {
     next(err);
   }
@@ -47,10 +57,13 @@ const login = async (req, res, next) => {
 
 const refreshToken = async (req, res, next) => {
   try {
-    const { refreshToken: token } = req.body;
-    if (!token) return error(res, 'Refresh token required', 400);
-    const result = await authService.refreshToken(token);
-    return success(res, result, 'Token refreshed');
+    const encrypted = req.cookies?.refreshToken;
+    if (!encrypted) return error(res, 'Refresh token required', 400);
+    const token = decrypt(encrypted);
+    const { accessToken, newRefreshToken } = await authService.refreshToken(token);
+    // Rotation: set the new encrypted refresh token cookie
+    res.cookie('refreshToken', encrypt(newRefreshToken), COOKIE_OPTS);
+    return success(res, { accessToken }, 'Token refreshed');
   } catch (err) {
     next(err);
   }
@@ -58,9 +71,23 @@ const refreshToken = async (req, res, next) => {
 
 const logout = async (req, res, next) => {
   try {
-    const { refreshToken: token } = req.body;
-    if (!token) return error(res, 'Refresh token required', 400);
-    await authService.logout(token);
+    const encrypted = req.cookies?.refreshToken;
+    // Decode current access token to blacklist its jti (best-effort, no throw)
+    let accessTokenDecoded = null;
+    try {
+      const bearer = req.headers['authorization']?.slice(7);
+      if (bearer) accessTokenDecoded = verifyAccessToken(bearer);
+    } catch { /* expired or invalid AT — still proceed with logout */ }
+
+    if (encrypted) {
+      try {
+        const token = decrypt(encrypted);
+        await authService.logout(token, accessTokenDecoded);
+      } catch {
+        // tampered or invalid cookie — clear it and proceed
+      }
+    }
+    res.clearCookie('refreshToken', COOKIE_OPTS);
     return success(res, null, 'Logged out successfully');
   } catch (err) {
     next(err);

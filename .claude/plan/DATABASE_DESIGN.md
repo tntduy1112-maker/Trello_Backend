@@ -371,20 +371,21 @@ CREATE INDEX idx_notifications_user_id ON notifications(user_id, is_read);
 ## 🚀 Kế hoạch triển khai (theo giai đoạn)
 
 ### Phase 1 — Core Foundation
-- [ ] `users`, `refresh_tokens`, `email_verifications`
-- [ ] `organizations`, `organization_members`
-- [ ] `boards`, `board_members`
+- [x] `users`, `refresh_tokens`, `email_verifications`
+- [x] `organizations`, `organization_members`
+- [x] `boards`, `board_members`
 
 ### Phase 2 — Board Features
-- [ ] `lists`, `cards`, `card_members`
-- [ ] `labels`, `card_labels`
+- [x] `lists`, `cards`, `card_members`
+- [x] `labels`, `card_labels`
 
 ### Phase 3 — Advanced Card Features
 - [ ] `checklists`, `checklist_items`
-- [ ] `comments`, `attachments`
+- [x] `comments` — API (GET/POST/PUT/DELETE) + threaded UI (edit/delete/reply) ✅
+- [ ] `attachments`
 
 ### Phase 4 — Monitoring & Notifications
-- [ ] `activity_logs`
+- [x] `activity_logs` — API (GET /boards/:id/activity, GET /cards/:id/activity) + Activity tab in CardDetailModal ✅
 - [ ] `notifications`
 
 ---

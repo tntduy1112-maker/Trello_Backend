@@ -13,9 +13,12 @@ export const getComments = (cardId) => api.get(`/cards/${cardId}/comments`)
 export const addComment = (cardId, data) => api.post(`/cards/${cardId}/comments`, data)
 export const updateComment = (commentId, data) => api.put(`/comments/${commentId}`, data)
 export const deleteComment = (commentId) => api.delete(`/comments/${commentId}`)
+export const getAttachments = (cardId) => api.get(`/cards/${cardId}/attachments`)
 export const addAttachment = (cardId, formData) =>
   api.post(`/cards/${cardId}/attachments`, formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
 export const deleteAttachment = (cardId, attachmentId) =>
   api.delete(`/cards/${cardId}/attachments/${attachmentId}`)
+export const toggleAttachmentCover = (cardId, attachmentId) =>
+  api.patch(`/cards/${cardId}/attachments/${attachmentId}/cover`)

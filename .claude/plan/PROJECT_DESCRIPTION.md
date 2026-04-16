@@ -25,8 +25,8 @@ Users
                     └── Cards (Tasks)
                           ├── card_members (1 assignee)
                           ├── card_labels (many labels)  ✅
+                          ├── Comments          ✅
                           ├── Checklists        ⏳
-                          ├── Comments          ⏳
                           └── Attachments       ⏳
 ```
 
@@ -128,11 +128,15 @@ Users
 
 ---
 
-### 8. Comments ⏳ Chưa implement
+### 8. Comments ✅ Hoàn thành
 
-- Bình luận trực tiếp trên card
-- Reply comment để tạo thread thảo luận lồng nhau
-- *(Bảng `comments` đã có trong DB schema, UI placeholder đã có trong CardDetailModal)*
+- Bình luận trực tiếp trên card — lưu xuống DB, hiển thị real-time từ Redux
+- Reply comment (1 cấp) — indent bên dưới comment gốc, phân cách bằng border-left
+- Chỉnh sửa comment inline — chỉ tác giả mới sửa được, hiển thị nhãn "(đã sửa)"
+- Xóa comment — chỉ tác giả; nếu có replies, replies float up (parent_id → NULL)
+- Backend: 4 endpoints — GET/POST `/cards/:cardId/comments`, PUT/DELETE `/comments/:commentId`
+- 1-level nesting guard: server từ chối reply-to-reply (400 Bad Request)
+- Redux: `cardComments[]` + `loadingComments` trong store, 4 thunks đồng bộ state nested replies
 
 ---
 
@@ -144,11 +148,14 @@ Users
 
 ---
 
-### 10. Activity Logs ⏳ Chưa implement
+### 10. Activity Logs ✅ Hoàn thành
 
 - Tự động ghi lại mọi hành động: ai làm gì, trên đối tượng nào, lúc nào
-- Lưu giá trị cũ/mới dưới dạng JSONB
-- *(Bảng `activity_logs` đã có trong DB schema)*
+- Lưu giá trị cũ/mới dưới dạng JSONB (`metadata.changes[]` — field-level diff)
+- Fire-and-forget: `logActivity()` không bao giờ throw — lỗi log không ảnh hưởng main flow
+- Hooks vào: `cards.service` (created/updated/deleted), `lists.service` (created/deleted), `comments.service` (added)
+- Backend: 2 endpoints — `GET /boards/:boardId/activity`, `GET /cards/:cardId/activity` (có phân trang)
+- Frontend: tab **Hoạt động** trong CardDetailModal bên cạnh tab Bình luận; hiển thị avatar, tên, mô tả tiếng Việt, relative time
 
 ---
 
@@ -176,13 +183,13 @@ Users
 - [ ] **Persist DnD vị trí vào DB** (`PUT /cards/:cardId` với position mới sau khi drop)
 - [x] Labels & card labels
 
-### Phase 3 — Advanced Card Features ⏳
+### Phase 3 — Advanced Card Features 🔄 Đang thực hiện
+- [x] Comments (bao gồm thread reply, edit, delete)
+- [x] Activity logs (hooks vào cards + lists + comments)
 - [ ] Checklists & checklist items
-- [ ] Comments (bao gồm thread reply)
 - [ ] Attachments & file upload
 
 ### Phase 4 — Monitoring & Notifications ⏳
-- [ ] Activity logs (server-side triggers)
 - [ ] Notification system
 
 ---
@@ -205,7 +212,8 @@ Duy_AI_Plan/
 │       │   ├── lists/             ✅ 4 endpoints
 │       │   ├── cards/             ✅ 5 endpoints
 │       │   ├── labels/            ✅ 7 endpoints
-│       │   ├── comments/          ⏳ chưa tạo
+│       │   ├── comments/          ✅ 4 endpoints
+│       │   ├── activityLogs/      ✅ 2 endpoints
 │       │   └── notifications/     ⏳ chưa tạo
 │       ├── middlewares/
 │       │   ├── authenticate.js    ← Xác thực JWT
@@ -214,7 +222,8 @@ Duy_AI_Plan/
 │           ├── jwt.js
 │           ├── bcrypt.js
 │           ├── email.js
-│           └── response.js
+│           ├── response.js
+│           └── activityLogger.js  ← Fire-and-forget activity INSERT
 │
 └── Frontend/
     └── src/
@@ -222,7 +231,8 @@ Duy_AI_Plan/
         ├── redux/slices/
         │   ├── authSlice.js       ✅ fetchMe, setCredentials
         │   ├── workspaceSlice.js  ✅ CRUD thunks
-        │   ├── boardSlice.js      ✅ fetchBoard, fetchBoardLists, createList/Card, saveCard, deleteCard, labels (6 thunks)
+        │   ├── boardSlice.js      ✅ fetchBoard, fetchBoardLists, createList/Card, saveCard, deleteCard,
+        │   │                         labels (6 thunks), comments (4 thunks), activity (1 thunk)
         │   └── notificationSlice.js
         ├── services/              ← API call functions (1 file per domain)
         ├── pages/                 ← Auth, Workspace, Board, Profile pages

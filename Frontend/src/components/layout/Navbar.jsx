@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useSelector, useDispatch } from 'react-redux'
 import { Bell, Search, ChevronDown, User, LogOut, Settings, Zap } from 'lucide-react'
 import { logout } from '../../redux/slices/authSlice'
+import { logout as logoutService } from '../../services/auth.service'
 import Avatar from '../ui/Avatar'
 import NotificationDropdown from '../ui/NotificationDropdown'
 import Dropdown from '../ui/Dropdown'
@@ -14,7 +15,8 @@ export default function Navbar() {
   const { unreadCount } = useSelector((state) => state.notification)
   const [notifOpen, setNotifOpen] = useState(false)
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try { await logoutService() } catch { /* ignore */ }
     dispatch(logout())
     navigate('/login')
   }

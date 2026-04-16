@@ -6,7 +6,12 @@
       "Bash(pkill -f \"vite\")",
       "Bash(npm run:*)",
       "Bash(pkill -f vite)",
-      "Bash(echo \"Started PID: $!\")"
+      "Bash(echo \"Started PID: $!\")",
+      "Bash(git remote:*)",
+      "Bash(lsof -ti:3000)",
+      "Bash(xargs kill:*)",
+      "Bash(lsof -ti:5173,5174,5175)",
+      "Bash(lsof -ti:5173)"
     ],
     "additionalDirectories": [
       "/private/tmp"

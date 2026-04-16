@@ -32,8 +32,8 @@ export default function LoginPage() {
     setApiError('')
     try {
       const res = await login({ email: form.email, password: form.password })
-      const { accessToken, refreshToken, user } = res.data.data
-      dispatch(setCredentials({ user, token: accessToken, refreshToken }))
+      const { accessToken, user } = res.data.data
+      dispatch(setCredentials({ user, token: accessToken }))
       const pending = sessionStorage.getItem('pendingInviteToken')
       if (pending) {
         sessionStorage.removeItem('pendingInviteToken')
