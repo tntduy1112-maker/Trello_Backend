@@ -1,11 +1,11 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import {
   X, AlignLeft, CheckSquare, MessageSquare,
   Archive, Trash2, Plus, Check,
   Edit3, UserX, Tag, Pencil, Activity,
   Paperclip, FileText, Image, Download, CheckCircle, AlertCircle,
-  LayoutList, ChevronDown,
+  LayoutList, ChevronDown, ArrowUp,
 } from 'lucide-react'
 import {
   updateCard, saveCardThunk, deleteCardThunk,
@@ -16,6 +16,8 @@ import {
   fetchCardAttachments, addAttachmentThunk,
   deleteAttachmentThunk, toggleAttachmentCoverThunk,
   moveCardFromModalThunk, setOpenCardId,
+  fetchCardChecklists, createChecklistThunk, updateChecklistThunk, deleteChecklistThunk,
+  addItemThunk, updateItemThunk, deleteItemThunk,
 } from '../../redux/slices/boardSlice'
 import { formatDate, formatRelativeTime, isOverdue } from '../../utils/helpers'
 import { PRIORITY_COLOR } from '../../data/constants'
@@ -35,13 +37,36 @@ const LABEL_COLORS = [
   '#FF78CB', '#344563',
 ]
 
+const PRIORITY_VI = {
+  low: 'Thấp',
+  medium: 'Trung bình',
+  high: 'Cao',
+  critical: 'Khẩn cấp',
+}
+
 const ACTION_LABEL = {
   'card.created': (m) => `đã tạo card "${m?.title || ''}"`,
   'card.deleted': (m) => `đã xóa card "${m?.title || ''}"`,
   'card.updated': (m) => {
     const changes = m?.changes || []
     if (changes.length === 0) return 'đã cập nhật card'
-    // Detail format for list moves
+    // Priority change — show old → new in Vietnamese
+    if (changes.length === 1 && changes[0].field === 'priority') {
+      const { oldValue, newValue } = changes[0]
+      const newLabel = PRIORITY_VI[newValue] || newValue
+      if (!oldValue || oldValue === 'null' || oldValue === null) {
+        return `đã đặt độ ưu tiên là ${newLabel}`
+      }
+      const oldLabel = PRIORITY_VI[oldValue] || oldValue
+      return `đã đổi độ ưu tiên từ ${oldLabel} sang ${newLabel}`
+    }
+    // Due date change
+    if (changes.length === 1 && changes[0].field === 'dueDate') {
+      const { newValue } = changes[0]
+      if (!newValue || newValue === 'null') return 'đã xóa ngày hết hạn'
+      return `đã đặt hạn chót là ${formatDate(newValue)}`
+    }
+    // List move
     if (changes.length === 1 && changes[0].field === 'list') {
       const { oldValue, newValue } = changes[0]
       return `đã chuyển card này từ "${oldValue}" sang "${newValue}"`
@@ -52,6 +77,10 @@ const ACTION_LABEL = {
   },
   'list.created': (m) => `đã tạo danh sách "${m?.name || ''}"`,
   'list.deleted': (m) => `đã xóa danh sách "${m?.name || ''}"`,
+  'checklist.created': (m) => `đã thêm checklist "${m?.title || ''}"`,
+  'checklist.deleted': (m) => `đã xóa checklist "${m?.title || ''}"`,
+  'checklist_item.completed': (m) => `đã hoàn thành mục "${m?.content || ''}"`,
+  'checklist_item.uncompleted': (m) => `đã bỏ hoàn thành mục "${m?.content || ''}"`,
 }
 
 const getActionLabel = (log) => {
@@ -71,6 +100,8 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
   const loadingComments = useSelector((state) => state.board.loadingComments)
   const cardAttachments = useSelector((state) => state.board.cardAttachments)
   const loadingAttachments = useSelector((state) => state.board.loadingAttachments)
+  const cardChecklists = useSelector((state) => state.board.cardChecklists)
+  const loadingChecklists = useSelector((state) => state.board.loadingChecklists)
 
   // Tracks which list this card currently belongs to (can change after an in-modal move)
   const [currentListId, setCurrentListId] = useState(listId)
@@ -107,6 +138,8 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
 
   // Save state
   const [saving, setSaving] = useState(false)
+  const [savingPriority, setSavingPriority] = useState(false)
+  const [savingDueDate, setSavingDueDate] = useState(false)
   const [saveError, setSaveError] = useState('')
   const [descError, setDescError] = useState('')
 
@@ -132,6 +165,29 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
   const [downloadingId, setDownloadingId] = useState(null)
   const [toast, setToast] = useState(null) // { message, type: 'success'|'error' }
 
+  // Checklists
+  const [addingChecklist, setAddingChecklist] = useState(false)
+  const [newChecklistTitle, setNewChecklistTitle] = useState('')
+  const [creatingChecklist, setCreatingChecklist] = useState(false)
+  const [editingChecklistId, setEditingChecklistId] = useState(null)
+  const [editingChecklistTitle, setEditingChecklistTitle] = useState('')
+  const [addingItemChecklistId, setAddingItemChecklistId] = useState(null)
+  const [newItemContent, setNewItemContent] = useState('')
+  const [editingItemId, setEditingItemId] = useState(null)
+  const [editingItemContent, setEditingItemContent] = useState('')
+
+  // ── Activity stream UX ────────────────────────────────────────────────────
+  const activityScrollRef   = useRef(null)
+  const isAtTopRef          = useRef(true)
+  const prevActivityLenRef  = useRef(0)
+  const activityReadyRef    = useRef(false)
+  const prevLoadingRef      = useRef(false)
+  const activeTabRef        = useRef('comments')
+
+  const [unseenCount,    setUnseenCount]    = useState(0)
+  const [newItemIds,     setNewItemIds]     = useState(() => new Set())
+  const [activityBadge,  setActivityBadge]  = useState(0)
+
   // Register the open card for live activity injection; fetch initial data.
   useEffect(() => {
     if (isOpen && card?.id) {
@@ -139,10 +195,62 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
       dispatch(fetchCardComments(card.id))
       dispatch(fetchCardActivity(card.id))
       dispatch(fetchCardAttachments(card.id))
+      dispatch(fetchCardChecklists(card.id))
     } else {
       dispatch(setOpenCardId(null))
     }
   }, [isOpen, card?.id, dispatch])
+
+  // Sync activeTabRef to avoid stale closures in injection effect
+  useEffect(() => { activeTabRef.current = activeTab }, [activeTab])
+
+  // After fetchCardActivity completes, establish baseline so SSE deltas are detectable
+  useEffect(() => {
+    if (prevLoadingRef.current && !loadingActivity) {
+      prevActivityLenRef.current = cardActivity.length
+      activityReadyRef.current = true
+    }
+    if (loadingActivity) activityReadyRef.current = false
+    prevLoadingRef.current = loadingActivity
+  }, [loadingActivity, cardActivity.length])
+
+  // Detect SSE-injected items and drive pill / badge / highlight
+  useEffect(() => {
+    if (!activityReadyRef.current) return
+    const added = cardActivity.length - prevActivityLenRef.current
+    prevActivityLenRef.current = cardActivity.length
+    if (added <= 0) return
+
+    // New items are at index 0..added-1 (injectCardActivity uses unshift)
+    const newIds = cardActivity.slice(0, added).map((a) => a.id)
+
+    setNewItemIds((prev) => new Set([...prev, ...newIds]))
+    const timer = setTimeout(() => {
+      setNewItemIds((prev) => {
+        const next = new Set(prev)
+        newIds.forEach((id) => next.delete(id))
+        return next
+      })
+    }, 3000)
+
+    if (activeTabRef.current !== 'activity') {
+      setActivityBadge((n) => n + added)
+    } else if (!isAtTopRef.current) {
+      setUnseenCount((n) => n + added)
+    }
+
+    return () => clearTimeout(timer)
+  }, [cardActivity])
+
+  // Reset all stream state when a different card opens
+  useEffect(() => {
+    setUnseenCount(0)
+    setActivityBadge(0)
+    setNewItemIds(new Set())
+    activityReadyRef.current = false
+    prevActivityLenRef.current = 0
+    isAtTopRef.current = true
+  }, [card?.id])
 
   // Close pickers when clicking outside
   useEffect(() => {
@@ -233,14 +341,46 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
     dispatch(deleteCommentThunk({ commentId, parentId }))
   }
 
-  const handleChangePriority = (p) => {
+  const handleChangePriority = async (p) => {
+    if (p === priority || savingPriority) return  // duplicate click / in-flight guard
+    const prev = priority
     setPriority(p)
     dispatch(updateCard({ listId: currentListId, cardId: card.id, updates: { priority: p } }))
+    setSavingPriority(true)
+    try {
+      await dispatch(saveCardThunk({
+        cardId: card.id,
+        listId: currentListId,
+        data: { priority: p },
+      })).unwrap()
+    } catch {
+      // API failed — roll back optimistic update, no ghost log
+      setPriority(prev)
+      dispatch(updateCard({ listId: currentListId, cardId: card.id, updates: { priority: prev } }))
+    } finally {
+      setSavingPriority(false)
+    }
   }
 
-  const handleChangeDueDate = (d) => {
+  const handleChangeDueDate = async (d) => {
+    if (d === dueDate || savingDueDate) return
+    const prev = dueDate
     setDueDate(d)
     dispatch(updateCard({ listId: currentListId, cardId: card.id, updates: { due_date: d } }))
+    setSavingDueDate(true)
+    try {
+      await dispatch(saveCardThunk({
+        cardId: card.id,
+        listId: currentListId,
+        data: { dueDate: d || null },
+      })).unwrap()
+    } catch {
+      setDueDate(prev)
+      dispatch(updateCard({ listId: currentListId, cardId: card.id, updates: { due_date: prev } }))
+      setToast({ message: 'Lưu ngày hết hạn thất bại. Vui lòng thử lại.', type: 'error' })
+    } finally {
+      setSavingDueDate(false)
+    }
   }
 
   const handleToggleComplete = async () => {
@@ -275,8 +415,6 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
         data: {
           title: title.trim() || card.title,
           description: description.trim(),
-          priority,
-          dueDate: dueDate || null,
           assigneeId: assignee?.user_id || null,
           isCompleted,
         },
@@ -457,6 +595,79 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
     }
   }
 
+  // ── Checklist handlers ────────────────────────────────────────────────────
+
+  const handleCreateChecklist = async () => {
+    if (!newChecklistTitle.trim() || creatingChecklist) return
+    setCreatingChecklist(true)
+    try {
+      await dispatch(createChecklistThunk({ cardId: card.id, listId: currentListId, title: newChecklistTitle.trim() })).unwrap()
+      setNewChecklistTitle('')
+      setAddingChecklist(false)
+    } finally {
+      setCreatingChecklist(false)
+    }
+  }
+
+  const handleRenameChecklist = async (checklistId) => {
+    if (!editingChecklistTitle.trim()) return
+    await dispatch(updateChecklistThunk({ checklistId, title: editingChecklistTitle.trim() }))
+    setEditingChecklistId(null)
+  }
+
+  const handleDeleteChecklist = (checklistId) => {
+    dispatch(deleteChecklistThunk({ checklistId, cardId: card.id, listId: currentListId }))
+  }
+
+  const handleAddItem = async (checklistId) => {
+    if (!newItemContent.trim()) return
+    await dispatch(addItemThunk({ checklistId, cardId: card.id, listId: currentListId, content: newItemContent.trim() })).unwrap()
+    setNewItemContent('')
+  }
+
+  const handleToggleItem = (item, checklistId) => {
+    dispatch(updateItemThunk({
+      itemId: item.id, checklistId, cardId: card.id, listId: currentListId,
+      fields: { is_completed: !item.is_completed },
+    }))
+  }
+
+  const handleEditItem = async (itemId, checklistId) => {
+    if (!editingItemContent.trim()) return
+    await dispatch(updateItemThunk({
+      itemId, checklistId, cardId: card.id, listId: currentListId,
+      fields: { content: editingItemContent.trim() },
+    })).unwrap()
+    setEditingItemId(null)
+  }
+
+  const handleDeleteItem = (itemId, checklistId) => {
+    dispatch(deleteItemThunk({ itemId, checklistId, cardId: card.id, listId: currentListId }))
+  }
+
+  const handleActivityScroll = useCallback(() => {
+    const el = activityScrollRef.current
+    if (!el) return
+    const atTop = el.scrollTop < 60
+    isAtTopRef.current = atTop
+    if (atTop) setUnseenCount(0)
+  }, [])
+
+  const handleScrollToNewActivity = () => {
+    activityScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+    setUnseenCount(0)
+  }
+
+  const handleTabChange = (tab) => {
+    setActiveTab(tab)
+    activeTabRef.current = tab
+    if (tab === 'activity') {
+      setActivityBadge(0)
+      isAtTopRef.current = true
+      setUnseenCount(0)
+    }
+  }
+
   const formatFileSize = (bytes) => {
     if (!bytes) return ''
     if (bytes < 1024) return `${bytes} B`
@@ -590,32 +801,136 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
               )}
             </div>
 
-            {/* Checklist */}
-            {card.checklist_progress && (
-              <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <CheckSquare size={16} className="text-[#8C9BAB]" />
-                  <h3 className="text-sm font-semibold text-[#B6C2CF]">Checklist</h3>
-                </div>
-                <ProgressBar
-                  completed={card.checklist_progress.completed}
-                  total={card.checklist_progress.total}
-                  className="mb-3"
-                />
-                <div className="space-y-2">
-                  {Array.from({ length: card.checklist_progress.total }, (_, i) => (
-                    <div key={i} className="flex items-center gap-3">
-                      <input
-                        type="checkbox"
-                        defaultChecked={i < card.checklist_progress.completed}
-                        className="w-4 h-4 rounded border-[#454F59] bg-[#22272B] accent-[#0C66E4]"
-                      />
-                      <span className={`text-sm ${i < card.checklist_progress.completed ? 'line-through text-[#596773]' : 'text-[#B6C2CF]'}`}>
-                        Mục {i + 1}
-                      </span>
+            {/* Checklists */}
+            {(loadingChecklists || cardChecklists.length > 0) && (
+              <div className="space-y-5">
+                {loadingChecklists ? (
+                  <div className="flex justify-center py-3">
+                    <div className="w-4 h-4 border-2 border-[#0C66E4] border-t-transparent rounded-full animate-spin" />
+                  </div>
+                ) : cardChecklists.map((checklist) => {
+                  const items = checklist.items || []
+                  const total = items.length
+                  const completedCount = items.filter((i) => i.is_completed).length
+                  return (
+                    <div key={checklist.id}>
+                      {/* Checklist header */}
+                      <div className="flex items-center gap-2 mb-2">
+                        <CheckSquare size={16} className="text-[#8C9BAB] flex-shrink-0" />
+                        {editingChecklistId === checklist.id ? (
+                          <div className="flex-1 flex gap-2">
+                            <input
+                              autoFocus
+                              value={editingChecklistTitle}
+                              onChange={(e) => setEditingChecklistTitle(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleRenameChecklist(checklist.id)
+                                if (e.key === 'Escape') setEditingChecklistId(null)
+                              }}
+                              className="flex-1 px-2 py-1 bg-[#22272B] border border-[#454F59] rounded text-sm text-[#B6C2CF] focus:outline-none focus:ring-1 focus:ring-[#0C66E4]"
+                            />
+                            <button onClick={() => handleRenameChecklist(checklist.id)} className="px-2 py-1 bg-[#0C66E4] hover:bg-[#0055CC] rounded text-xs text-white transition-colors">Lưu</button>
+                            <button onClick={() => setEditingChecklistId(null)} className="px-2 py-1 bg-[#2C333A] hover:bg-[#38424B] rounded text-xs text-[#B6C2CF] transition-colors">Hủy</button>
+                          </div>
+                        ) : (
+                          <>
+                            <h3
+                              className="text-sm font-semibold text-[#B6C2CF] flex-1 cursor-pointer hover:text-white transition-colors"
+                              onClick={() => { setEditingChecklistId(checklist.id); setEditingChecklistTitle(checklist.title) }}
+                            >
+                              {checklist.title}
+                            </h3>
+                            <button
+                              onClick={() => handleDeleteChecklist(checklist.id)}
+                              className="text-[#596773] hover:text-red-400 transition-colors flex-shrink-0"
+                              title="Xóa checklist"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </>
+                        )}
+                      </div>
+
+                      {/* Progress bar */}
+                      {total > 0 && (
+                        <ProgressBar completed={completedCount} total={total} className="mb-3" />
+                      )}
+
+                      {/* Items */}
+                      <div className="space-y-1 ml-6">
+                        {items.map((item) => (
+                          <div key={item.id} className="flex items-start gap-2 group">
+                            <input
+                              type="checkbox"
+                              checked={item.is_completed}
+                              onChange={() => handleToggleItem(item, checklist.id)}
+                              className="w-4 h-4 mt-0.5 flex-shrink-0 rounded border-[#454F59] bg-[#22272B] accent-[#0C66E4] cursor-pointer"
+                            />
+                            {editingItemId === item.id ? (
+                              <div className="flex-1 flex gap-2">
+                                <input
+                                  autoFocus
+                                  value={editingItemContent}
+                                  onChange={(e) => setEditingItemContent(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleEditItem(item.id, checklist.id)
+                                    if (e.key === 'Escape') setEditingItemId(null)
+                                  }}
+                                  className="flex-1 px-2 py-0.5 bg-[#22272B] border border-[#454F59] rounded text-sm text-[#B6C2CF] focus:outline-none focus:ring-1 focus:ring-[#0C66E4]"
+                                />
+                                <button onClick={() => handleEditItem(item.id, checklist.id)} className="px-2 py-0.5 bg-[#0C66E4] hover:bg-[#0055CC] rounded text-xs text-white transition-colors">Lưu</button>
+                                <button onClick={() => setEditingItemId(null)} className="px-2 py-0.5 bg-[#2C333A] hover:bg-[#38424B] rounded text-xs text-[#B6C2CF] transition-colors">Hủy</button>
+                              </div>
+                            ) : (
+                              <span
+                                className={`flex-1 text-sm cursor-pointer hover:text-white transition-colors ${
+                                  item.is_completed ? 'line-through text-[#596773]' : 'text-[#B6C2CF]'
+                                }`}
+                                onClick={() => { setEditingItemId(item.id); setEditingItemContent(item.content) }}
+                              >
+                                {item.content}
+                              </span>
+                            )}
+                            <button
+                              onClick={() => handleDeleteItem(item.id, checklist.id)}
+                              className="opacity-0 group-hover:opacity-100 text-[#596773] hover:text-red-400 transition-all flex-shrink-0 mt-0.5"
+                            >
+                              <X size={12} />
+                            </button>
+                          </div>
+                        ))}
+
+                        {/* Add item form */}
+                        {addingItemChecklistId === checklist.id ? (
+                          <div className="mt-2">
+                            <input
+                              autoFocus
+                              value={newItemContent}
+                              onChange={(e) => setNewItemContent(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleAddItem(checklist.id)
+                                if (e.key === 'Escape') { setAddingItemChecklistId(null); setNewItemContent('') }
+                              }}
+                              placeholder="Thêm mục..."
+                              className="w-full px-3 py-2 bg-[#22272B] border border-[#454F59] rounded-lg text-sm text-[#B6C2CF] placeholder-[#596773] focus:outline-none focus:ring-1 focus:ring-[#0C66E4]"
+                            />
+                            <div className="flex gap-2 mt-2">
+                              <button onClick={() => handleAddItem(checklist.id)} className="px-3 py-1.5 bg-[#0C66E4] hover:bg-[#0055CC] rounded-lg text-xs text-white transition-colors">Thêm</button>
+                              <button onClick={() => { setAddingItemChecklistId(null); setNewItemContent('') }} className="px-3 py-1.5 bg-[#2C333A] hover:bg-[#38424B] rounded-lg text-xs text-[#B6C2CF] transition-colors">Hủy</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => { setAddingItemChecklistId(checklist.id); setNewItemContent('') }}
+                            className="flex items-center gap-1.5 text-xs text-[#596773] hover:text-[#B6C2CF] transition-colors mt-1"
+                          >
+                            <Plus size={12} /> Thêm mục
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  ))}
-                </div>
+                  )
+                })}
               </div>
             )}
 
@@ -696,7 +1011,7 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
               {/* Tab switcher */}
               <div className="flex items-center gap-1 mb-3">
                 <button
-                  onClick={() => setActiveTab('comments')}
+                  onClick={() => handleTabChange('comments')}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                     activeTab === 'comments' ? 'bg-[#2C333A] text-white' : 'text-[#8C9BAB] hover:text-[#B6C2CF]'
                   }`}
@@ -705,13 +1020,18 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
                   Bình luận
                 </button>
                 <button
-                  onClick={() => setActiveTab('activity')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  onClick={() => handleTabChange('activity')}
+                  className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                     activeTab === 'activity' ? 'bg-[#2C333A] text-white' : 'text-[#8C9BAB] hover:text-[#B6C2CF]'
                   }`}
                 >
                   <Activity size={13} />
                   Hoạt động
+                  {activityBadge > 0 && (
+                    <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 bg-[#0C66E4] text-white text-[10px] font-bold rounded-full flex items-center justify-center leading-none">
+                      {activityBadge > 9 ? '9+' : activityBadge}
+                    </span>
+                  )}
                 </button>
               </div>
 
@@ -906,32 +1226,55 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
 
               {/* Activity panel */}
               {activeTab === 'activity' && (
-                <div className="space-y-3">
-                  {loadingActivity ? (
-                    <div className="flex justify-center py-6">
-                      <div className="w-5 h-5 border-2 border-[#0C66E4] border-t-transparent rounded-full animate-spin" />
+                <div className="relative">
+                  {/* Floating pill — new items arrived while scrolled down */}
+                  {unseenCount > 0 && (
+                    <div className="flex justify-center mb-2">
+                      <button
+                        onClick={handleScrollToNewActivity}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0C66E4] hover:bg-[#0055CC] text-white text-xs font-medium rounded-full shadow-lg transition-colors animate-fade-in"
+                      >
+                        <ArrowUp size={12} />
+                        {unseenCount} hoạt động mới
+                      </button>
                     </div>
-                  ) : cardActivity.length === 0 ? (
-                    <p className="text-xs text-[#596773] text-center py-6">Chưa có hoạt động nào.</p>
-                  ) : cardActivity.map((log) => (
-                    <div key={log.id} className="flex gap-3">
-                      <Avatar
-                        src={log.user?.avatar_url}
-                        name={log.user?.full_name || '?'}
-                        size="sm"
-                        className="flex-shrink-0 mt-0.5"
-                      />
-                      <div className="flex-1">
-                        <div className="flex items-baseline gap-2">
-                          <span className="text-sm font-medium text-white">
-                            {log.user?.full_name || 'Người dùng'}
-                          </span>
-                          <span className="text-xs text-[#596773]">{formatRelativeTime(log.created_at)}</span>
-                        </div>
-                        <p className="text-xs text-[#8C9BAB] mt-0.5">{getActionLabel(log)}</p>
+                  )}
+
+                  {/* Scrollable list */}
+                  <div
+                    ref={activityScrollRef}
+                    onScroll={handleActivityScroll}
+                    className="space-y-3 max-h-96 overflow-y-auto pr-1"
+                  >
+                    {loadingActivity ? (
+                      <div className="flex justify-center py-6">
+                        <div className="w-5 h-5 border-2 border-[#0C66E4] border-t-transparent rounded-full animate-spin" />
                       </div>
-                    </div>
-                  ))}
+                    ) : cardActivity.length === 0 ? (
+                      <p className="text-xs text-[#596773] text-center py-6">Chưa có hoạt động nào.</p>
+                    ) : cardActivity.map((log) => (
+                      <div
+                        key={log.id}
+                        className={`flex gap-3 rounded-lg px-1 -mx-1 ${newItemIds.has(log.id) ? 'animate-fade-highlight' : ''}`}
+                      >
+                        <Avatar
+                          src={log.user?.avatar_url}
+                          name={log.user?.full_name || '?'}
+                          size="sm"
+                          className="flex-shrink-0 mt-0.5"
+                        />
+                        <div className="flex-1">
+                          <div className="flex items-baseline gap-2">
+                            <span className="text-sm font-medium text-white">
+                              {log.user?.full_name || 'Người dùng'}
+                            </span>
+                            <span className="text-xs text-[#596773]">{formatRelativeTime(log.created_at)}</span>
+                          </div>
+                          <p className="text-xs text-[#8C9BAB] mt-0.5">{getActionLabel(log)}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -1277,18 +1620,70 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
               )}
             </div>
 
+            {/* Checklist */}
+            <div>
+              <p className="text-xs font-semibold text-[#8C9BAB] mb-2 uppercase tracking-wide">Checklist</p>
+              {addingChecklist ? (
+                <div>
+                  <input
+                    autoFocus
+                    value={newChecklistTitle}
+                    onChange={(e) => setNewChecklistTitle(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleCreateChecklist()
+                      if (e.key === 'Escape') { setAddingChecklist(false); setNewChecklistTitle('') }
+                    }}
+                    placeholder="Tiêu đề checklist..."
+                    className="w-full px-2 py-1.5 bg-[#22272B] border border-[#454F59] rounded-lg text-xs text-[#B6C2CF] placeholder-[#596773] focus:outline-none focus:ring-1 focus:ring-[#0C66E4] mb-2"
+                  />
+                  <div className="flex gap-1.5">
+                    <button
+                      onClick={handleCreateChecklist}
+                      disabled={creatingChecklist || !newChecklistTitle.trim()}
+                      className="flex-1 px-2 py-1.5 bg-[#0C66E4] hover:bg-[#0055CC] disabled:opacity-50 text-white rounded-lg text-xs transition-colors"
+                    >
+                      Thêm
+                    </button>
+                    <button
+                      onClick={() => { setAddingChecklist(false); setNewChecklistTitle('') }}
+                      className="flex-1 px-2 py-1.5 bg-[#2C333A] hover:bg-[#38424B] text-[#B6C2CF] rounded-lg text-xs transition-colors"
+                    >
+                      Hủy
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setAddingChecklist(true)}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 bg-[#2C333A] hover:bg-[#38424B] text-[#B6C2CF] rounded-lg text-xs transition-colors"
+                >
+                  <CheckSquare size={13} /> Thêm checklist
+                </button>
+              )}
+              {cardChecklists.length > 0 && (
+                <p className="text-[10px] text-[#596773] mt-1">{cardChecklists.length} checklist</p>
+              )}
+            </div>
+
             {/* Due date */}
             <div>
               <p className="text-xs font-semibold text-[#8C9BAB] mb-2 uppercase tracking-wide">Ngày hết hạn</p>
               <input
                 type="date"
                 value={dueDate}
+                disabled={savingDueDate}
                 onChange={(e) => handleChangeDueDate(e.target.value)}
-                className={`w-full px-2 py-1.5 bg-[#22272B] border rounded-lg text-xs text-[#B6C2CF] focus:outline-none focus:ring-1 focus:ring-[#0C66E4] ${
+                className={`w-full px-2 py-1.5 bg-[#22272B] border rounded-lg text-xs text-[#B6C2CF] focus:outline-none focus:ring-1 focus:ring-[#0C66E4] disabled:opacity-60 disabled:cursor-not-allowed ${
                   overdue ? 'border-red-500' : 'border-[#454F59]'
                 }`}
               />
-              {dueDate && (
+              {savingDueDate && (
+                <div className="flex items-center gap-1.5 mt-1">
+                  <div className="w-3 h-3 border-2 border-[#0C66E4] border-t-transparent rounded-full animate-spin" />
+                  <span className="text-[10px] text-[#596773]">Đang lưu...</span>
+                </div>
+              )}
+              {!savingDueDate && dueDate && (
                 <p className={`text-xs mt-1 ${overdue ? 'text-red-400' : 'text-[#596773]'}`}>
                   {overdue ? 'Đã quá hạn' : formatDate(dueDate)}
                 </p>
@@ -1303,13 +1698,18 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
                   <button
                     key={opt.value}
                     onClick={() => handleChangePriority(opt.value)}
-                    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs transition-colors ${
+                    disabled={savingPriority}
+                    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
                       priority === opt.value ? 'bg-[#2C333A] text-white' : 'text-[#8C9BAB] hover:bg-[#2C333A]'
                     }`}
                   >
                     <div className={`w-2 h-2 rounded-full ${PRIORITY_COLOR[opt.value]}`} />
                     {opt.label}
-                    {priority === opt.value && <Check size={12} className="ml-auto" />}
+                    {priority === opt.value && (
+                      savingPriority
+                        ? <div className="ml-auto w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                        : <Check size={12} className="ml-auto" />
+                    )}
                   </button>
                 ))}
               </div>

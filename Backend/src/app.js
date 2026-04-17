@@ -13,6 +13,7 @@ const { boardLabelsRouter, labelRouter, cardLabelsRouter } = require('./modules/
 const { boardActivityRouter, cardActivityRouter } = require('./modules/activityLogs/activityLogs.route');
 const { cardCommentsRouter, commentRouter } = require('./modules/comments/comments.route');
 const { cardAttachmentsRouter } = require('./modules/attachments/attachments.route');
+const { cardChecklistsRouter, checklistRouter, checklistItemsRouter, checklistItemRouter } = require('./modules/checklists/checklists.route');
 const invitationsRouter = require('./modules/invitations/invitations.route');
 const notificationsRouter = require('./modules/notifications/notifications.route');
 const { startDueDateReminder } = require('./jobs/dueDateReminder');
@@ -58,6 +59,10 @@ app.use('/api/v1/cards/:cardId/activity', cardActivityRouter);
 app.use('/api/v1/cards/:cardId/comments', cardCommentsRouter);
 app.use('/api/v1/comments/:commentId', commentRouter);
 app.use('/api/v1/cards/:cardId/attachments', cardAttachmentsRouter);
+app.use('/api/v1/cards/:cardId/checklists', cardChecklistsRouter);
+app.use('/api/v1/checklists/:checklistId/items', checklistItemsRouter);
+app.use('/api/v1/checklists/:checklistId', checklistRouter);
+app.use('/api/v1/checklist-items/:itemId', checklistItemRouter);
 app.use('/api/v1/invitations', invitationsRouter);
 app.use('/api/v1/notifications', notificationsRouter);
 

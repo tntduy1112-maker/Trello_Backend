@@ -30,7 +30,7 @@ Users
                           ├── Comments (1-level threaded)  ✅
                           ├── Attachments (MinIO)          ✅
                           ├── Activity Logs               ✅
-                          └── Checklists                  ⏳
+                          └── Checklists                  ✅
       └── Notifications (SSE real-time)            ✅
 ```
 
@@ -94,7 +94,7 @@ Users
 
 - Tạo các cột trong board để phân loại công việc (VD: To Do, In Progress, Done)
 - Đổi tên list inline trực tiếp trên board
-- Kéo thả để sắp xếp lại thứ tự các cột (UI hoạt động, chưa persist vị trí vào DB)
+- Kéo thả để sắp xếp lại thứ tự các cột — persist vị trí vào DB ngay sau khi thả, rollback nếu API lỗi
 - Xoá list (kéo theo toàn bộ cards)
 - Position lưu dạng FLOAT — hỗ trợ insert O(1) không cần reindex
 
@@ -103,13 +103,14 @@ Users
 ### 5. Cards (Công việc) ✅ Hoàn thành
 
 - Tạo card với tiêu đề
-- Kéo thả card giữa các list và sắp xếp thứ tự (UI hoạt động, chưa persist vị trí vào DB)
+- Kéo thả card giữa các list và sắp xếp thứ tự — persist vị trí vào DB ngay sau khi thả, rollback nếu API lỗi
 - Chỉnh sửa tiêu đề, mô tả inline trong modal
 - Đặt ngày đến hạn (due date) — hiển thị màu đỏ nếu quá hạn
-- Gán mức độ ưu tiên: `Low` / `Medium` / `High` / `Critical`
+- Gán mức độ ưu tiên: `Low` / `Medium` / `High` / `Critical` — lưu ngay khi click, activity log tức thì, rollback nếu lỗi
 - Gán **một** thành viên vào card (single assignee — ownership rõ ràng)
 - **Đánh dấu hoàn thành** (`is_completed` toggle) — visual feedback: title gạch ngang, badge "Hoàn thành"
 - Hiển thị ảnh bìa (cover image) từ attachment
+- Badge `☑ X/Y` trên card trong board view — `checklist_progress` embed vào `findCardsByListId` query, ẩn khi `total = 0`
 - Nút **"Lưu trữ card"**: validate mô tả không rỗng → lưu tất cả thông tin xuống DB
 - Xoá card
 
@@ -127,11 +128,22 @@ Users
 
 ---
 
-### 7. Checklists ⏳ Chưa implement
+### 7. Checklists ✅ Hoàn thành
 
-- Thêm một hoặc nhiều checklist vào card
-- Mỗi item có thể gán người phụ trách, đặt deadline riêng, đánh dấu hoàn thành
-- *(Bảng `checklists` và `checklist_items` đã có trong DB schema)*
+- Thêm một hoặc nhiều checklist vào card (tạo từ sidebar, tên tùy chỉnh)
+- Đổi tên checklist inline — click vào tên để edit, Enter/Escape để lưu/hủy
+- Xóa checklist (kéo theo toàn bộ items)
+- Thêm item vào checklist — nhấn "+ Thêm mục", Enter để xác nhận
+- Chỉnh sửa nội dung item inline — click vào text để edit
+- Đánh dấu hoàn thành item — checkbox toggle, text gạch ngang khi done
+- Xóa item — icon X hiện khi hover
+- Progress bar hiển thị `completed/total` per checklist — xanh khi 100%
+- Badge `☑ X/Y` hiển thị trên card trong board view (ẩn khi total = 0)
+- Activity logging: `checklist.created`, `checklist.deleted`, `checklist_item.completed`, `checklist_item.uncompleted`
+- `checklist_progress` được tính live từ DB và đồng bộ vào Redux sau mỗi thao tác
+- Backend: 7 endpoints — `GET/POST /cards/:cardId/checklists`, `PUT/DELETE /checklists/:id`, `POST /checklists/:id/items`, `PUT/DELETE /checklist-items/:id`
+- Redux: `cardChecklists[]` + `loadingChecklists` trong store, 7 thunks + `_syncChecklistProgress` helper
+- **Phase 2 (chưa implement):** item assignee (`assigned_to`), item due date (`due_date`)
 
 ---
 
@@ -164,9 +176,16 @@ Users
 - Tự động ghi lại mọi hành động: ai làm gì, trên đối tượng nào, lúc nào
 - Lưu giá trị metadata dưới dạng JSONB (field-level context)
 - Fire-and-forget: `logActivity()` không bao giờ throw — lỗi log không ảnh hưởng main flow
-- Hooks vào: `cards.service` (created/updated/deleted), `lists.service` (created/deleted), `comments.service` (added), `attachments.service` (added/deleted/cover)
+- Hooks vào: `cards.service` (created/updated/deleted), `lists.service` (created/deleted), `comments.service` (added), `attachments.service` (added/deleted/cover), `checklists.service` (created/deleted, item completed/uncompleted)
+- **Priority change logging:** priority được persist ngay khi click (không cần "Lưu trữ card") — backend detect diff, log `card.updated` với `changes[{ field: 'priority', oldValue, newValue }]`; duplicate click guard + rollback nếu API fail
+- **Human-readable display:** `ACTION_LABEL` dịch priority sang tiếng Việt — *"đã đặt độ ưu tiên là Cao"* / *"đã đổi độ ưu tiên từ Trung bình sang Cao"*; có label riêng cho checklist và comment actions
 - Backend: 2 endpoints — `GET /boards/:boardId/activity`, `GET /cards/:cardId/activity`
-- Frontend: tab **Hoạt động** trong CardDetailModal; hiển thị avatar, tên, mô tả, relative time
+- Frontend: tab **Hoạt động** trong CardDetailModal; hiển thị avatar, tên, mô tả, relative time; real-time inject qua SSE (`injectCardActivity`)
+- **Reactive UX (Phase 5.2):**
+  - **Scroll-aware pill** — khi user cuộn xuống và có item mới inject, hiển thị pill "↑ N hoạt động mới"; click → smooth scroll về top + ẩn pill
+  - **Highlight fade 3s** — item mới nhận class `animate-fade-highlight` (Tailwind keyframe blue glow → transparent trong 3s, `forwards`); ID tự xoá khỏi `newItemIds` Set sau 3s
+  - **Tab badge** — khi tab "Hoạt động" không active mà có inject mới, badge count hiển thị trên tab button; reset khi chuyển sang tab activity
+  - Detection pipeline: `prevActivityLenRef` làm baseline sau khi fetch hoàn tất (`activityReadyRef`), `useEffect` trên `cardActivity` tính delta → route đến pill / badge / highlight tùy `activeTabRef` + `isAtTopRef`
 
 ---
 
@@ -200,7 +219,7 @@ Users
 - [x] Cards CRUD (tạo, sửa title/description/priority/dueDate/assignee, xoá)
 - [x] Single assignee per card (card_members)
 - [x] Drag & Drop UI (list reorder, card reorder, card move between lists)
-- [ ] **Persist DnD vị trí vào DB** (`PUT /cards/:cardId` + `PUT /lists/:listId` với position mới)
+- [x] **Persist DnD vị trí vào DB** (`PUT /cards/:cardId` + `PUT /lists/:listId` với position mới) — snapshot-based rollback (pass `snapshot` qua rejectWithValue, reducer khôi phục state), `dndError` toast với `clearDndError`, `calcPosition()` guard, unified positioning strategy
 - [x] Labels & card labels
 
 ### Phase 3 — Advanced Card Features ✅ Hoàn thành
@@ -210,7 +229,7 @@ Users
 - [x] Card completion toggle (`is_completed`)
 - [x] Board invitation (token-based email flow)
 - [x] Security hardening (hashed tokens, Redis blacklist, token rotation)
-- [ ] Checklists & checklist items
+- [x] Checklists & checklist items (create, rename, delete, add/edit/toggle/delete items, progress bar, board view pill)
 
 ### Phase 4 — Monitoring & Notifications ✅ Hoàn thành
 - [x] Notification system (SSE real-time) — assign, comment, due date reminder
@@ -219,7 +238,7 @@ Users
 
 ### Phase 5 — Reactive Activity Stream 🔄 Đang thực hiện
 - [x] **Phase 1 — Foundation:** `broadcastCardActivity()` phát SSE tới tất cả board members; `activityLogger` dùng CTE INSERT để lấy lại row kèm user info trong 1 query rồi broadcast ngay; `injectCardActivity` reducer với de-dup theo `event_id`; `useNotificationStream` định tuyến theo `topic`; `CardDetailModal` đăng ký `openCardId` khi mở/đóng
-- [ ] **Phase 2 — Core UX:** scroll-aware prepend vs. floating pill; highlight fade animation 3s; tab badge khi có activity mới
+- [x] **Phase 2 — Core UX:** scroll-aware prepend vs. floating pill; highlight fade animation 3s; tab badge khi có activity mới
 - [ ] **Phase 3 — Resilience:** Type B batching server-side; reconnect refetch; "Live updates paused" banner
 
 ---
@@ -253,6 +272,7 @@ Duy_AI_Plan/
 │       │   ├── comments/              ✅ 4 endpoints
 │       │   ├── activityLogs/          ✅ 2 endpoints
 │       │   ├── attachments/           ✅ 4 endpoints
+│       │   ├── checklists/            ✅ 7 endpoints (GET/POST card checklists, PUT/DELETE checklist, POST items, PUT/DELETE item)
 │       │   ├── invitations/           ✅ 2 endpoints (preview + accept)
 │       │   └── notifications/         ✅ 6 endpoints (list, count, stream SSE, read, read-all, delete)
 │       ├── middlewares/
@@ -279,8 +299,9 @@ Duy_AI_Plan/
         ├── redux/slices/
         │   ├── authSlice.js           ✅ fetchMe, setCredentials
         │   ├── workspaceSlice.js      ✅ CRUD thunks
-        │   ├── boardSlice.js          ✅ lists, cards, labels, comments, activity, attachments (30+ thunks)
-        │   │                             + openCardId, setOpenCardId, injectCardActivity
+        │   ├── boardSlice.js          ✅ lists, cards, labels, comments, activity, attachments, checklists (44+ thunks)
+        │   │                             + openCardId, setOpenCardId, injectCardActivity, _syncChecklistProgress
+        │   │                             + dndError state, clearDndError action (snapshot rollback for DnD)
         │   └── notificationSlice.js   ✅ 5 thunks + addNotification (SSE)
         ├── services/                  ← API call functions (1 file per domain)
         ├── pages/

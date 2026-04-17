@@ -16,9 +16,9 @@ import {
 } from '@dnd-kit/sortable'
 import {
   Plus, Globe, Lock, Users, UserPlus, Filter,
-  ArrowLeft, MoreHorizontal, Star
+  ArrowLeft, MoreHorizontal, Star, AlertCircle, X,
 } from 'lucide-react'
-import { setLists, setCards, clearBoard, fetchBoard, fetchBoardLists, fetchBoardLabels, createListThunk, persistCardMoveThunk, persistListPositionThunk } from '../../redux/slices/boardSlice'
+import { setLists, setCards, clearBoard, fetchBoard, fetchBoardLists, fetchBoardLabels, createListThunk, persistCardMoveThunk, persistListPositionThunk, clearDndError } from '../../redux/slices/boardSlice'
 import { getBoardMembers } from '../../services/board.service'
 import Navbar from '../../components/layout/Navbar'
 import ListColumn from '../../components/board/ListColumn'
@@ -77,7 +77,7 @@ export default function BoardPage() {
   const { boardId } = useParams()
   const navigate = useNavigate()
   const dispatch = useDispatch()
-  const { currentBoard, lists, cards, loadingBoard } = useSelector((state) => state.board)
+  const { currentBoard, lists, cards, loadingBoard, dndError } = useSelector((state) => state.board)
   const { user } = useSelector((state) => state.auth)
 
   const store = useStore()
@@ -171,9 +171,11 @@ export default function BoardPage() {
   }
 
   // Calculate a float position that places an item between its new neighbors.
+  // Guards against undefined positions from legacy data.
   const calcPosition = (items, toIdx) => {
-    const prev = toIdx > 0 ? items[toIdx - 1].position : 0
-    const next = toIdx < items.length - 1 ? items[toIdx + 1].position : (items[toIdx - 1]?.position ?? 0) + 2
+    const prev = toIdx > 0 ? (items[toIdx - 1].position ?? 0) : 0
+    const fallback = (items[toIdx - 1]?.position ?? 0) + 2000
+    const next = toIdx < items.length - 1 ? (items[toIdx + 1].position ?? fallback) : fallback
     return (prev + next) / 2
   }
 
@@ -190,10 +192,11 @@ export default function BoardPage() {
       const fromIdx = lists.findIndex((l) => `list-${l.id}` === active.id)
       const toIdx   = lists.findIndex((l) => `list-${l.id}` === over.id)
       if (fromIdx === toIdx || fromIdx === -1 || toIdx === -1) return
+      const snapshot = [...lists]
       const newLists = arrayMove(lists, fromIdx, toIdx)
       dispatch(setLists(newLists))
       const newPos = calcPosition(newLists, toIdx)
-      dispatch(persistListPositionThunk({ listId: newLists[toIdx].id, position: newPos }))
+      dispatch(persistListPositionThunk({ listId: newLists[toIdx].id, position: newPos, snapshot }))
       return
     }
 
@@ -212,19 +215,21 @@ export default function BoardPage() {
         const fromIdx = listCards.findIndex((c) => c.id === active.id)
         const toIdx   = listCards.findIndex((c) => c.id === over.id)
         if (fromIdx === toIdx || fromIdx === -1 || toIdx === -1) return
+        const snapshot = { ...liveCards }
         const newListCards = arrayMove(listCards, fromIdx, toIdx)
         dispatch(setCards({ ...liveCards, [originalListId]: newListCards }))
         const newPos = calcPosition(newListCards, toIdx)
-        dispatch(persistCardMoveThunk({ cardId: active.id, listId: originalListId, position: newPos }))
+        dispatch(persistCardMoveThunk({ cardId: active.id, listId: originalListId, position: newPos, snapshot }))
         return
       }
 
       // Cross-list move — visual state already updated by handleDragOver.
+      const snapshot = { ...liveCards }
       const targetCards = liveCards[targetListId] || []
       const cardIdx = targetCards.findIndex((c) => c.id === active.id)
       if (cardIdx === -1) return
       const newPos = calcPosition(targetCards, cardIdx)
-      dispatch(persistCardMoveThunk({ cardId: active.id, listId: targetListId, position: newPos }))
+      dispatch(persistCardMoveThunk({ cardId: active.id, listId: targetListId, position: newPos, snapshot }))
     }
   }
 
@@ -341,6 +346,17 @@ export default function BoardPage() {
       )}
 
       <InviteMemberModal isOpen={inviteOpen} onClose={() => setInviteOpen(false)} />
+
+      {/* DnD persist error toast */}
+      {dndError && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-3 bg-[#3A1D1D] border border-red-700/60 text-red-300 rounded-xl shadow-2xl text-sm font-medium">
+          <AlertCircle size={16} className="flex-shrink-0 text-red-400" />
+          <span>{dndError}</span>
+          <button onClick={() => dispatch(clearDndError())} className="ml-1 opacity-60 hover:opacity-100 transition-opacity">
+            <X size={14} />
+          </button>
+        </div>
+      )}
     </div>
   )
 }

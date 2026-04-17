@@ -5,7 +5,12 @@ const findCardsByListId = async (listId) => {
     `SELECT c.*,
        COALESCE(m.assignees, '[]') AS assignees,
        COALESCE(l.labels,    '[]') AS labels,
-       (SELECT COUNT(*)::int FROM attachments WHERE card_id = c.id) AS attachment_count
+       (SELECT COUNT(*)::int FROM attachments WHERE card_id = c.id) AS attachment_count,
+       (SELECT json_build_object(
+         'total',     COUNT(ci.id)::int,
+         'completed', COUNT(ci.id) FILTER (WHERE ci.is_completed)::int
+       ) FROM checklists cl JOIN checklist_items ci ON ci.checklist_id = cl.id
+       WHERE cl.card_id = c.id) AS checklist_progress
      FROM cards c
      LEFT JOIN LATERAL (
        SELECT json_agg(json_build_object(
@@ -40,7 +45,12 @@ const findCardById = async (id) => {
     `SELECT c.*,
        COALESCE(m.assignees, '[]') AS assignees,
        COALESCE(l.labels,    '[]') AS labels,
-       (SELECT COUNT(*)::int FROM attachments WHERE card_id = c.id) AS attachment_count
+       (SELECT COUNT(*)::int FROM attachments WHERE card_id = c.id) AS attachment_count,
+       (SELECT json_build_object(
+         'total',     COUNT(ci.id)::int,
+         'completed', COUNT(ci.id) FILTER (WHERE ci.is_completed)::int
+       ) FROM checklists cl JOIN checklist_items ci ON ci.checklist_id = cl.id
+       WHERE cl.card_id = c.id) AS checklist_progress
      FROM cards c
      LEFT JOIN LATERAL (
        SELECT json_agg(json_build_object(

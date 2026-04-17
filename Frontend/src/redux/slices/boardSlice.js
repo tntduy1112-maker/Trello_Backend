@@ -1,7 +1,7 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit'
 import { getBoard } from '../../services/board.service'
 import { getLists, createList, updateList as updateListApi } from '../../services/list.service'
-import { getCards, createCard, updateCard as updateCardApi, deleteCard as deleteCardApi, getComments as getCommentsApi, addComment as addCommentApi, updateComment as updateCommentApi, deleteComment as deleteCommentApi, getAttachments as getAttachmentsApi, addAttachment as addAttachmentApi, deleteAttachment as deleteAttachmentApi, toggleAttachmentCover as toggleAttachmentCoverApi } from '../../services/card.service'
+import { getCards, createCard, updateCard as updateCardApi, deleteCard as deleteCardApi, getComments as getCommentsApi, addComment as addCommentApi, updateComment as updateCommentApi, deleteComment as deleteCommentApi, getAttachments as getAttachmentsApi, addAttachment as addAttachmentApi, deleteAttachment as deleteAttachmentApi, toggleAttachmentCover as toggleAttachmentCoverApi, getChecklists as getChecklistsApi, createChecklist as createChecklistApi, updateChecklist as updateChecklistApi, deleteChecklist as deleteChecklistApi, addChecklistItem as addChecklistItemApi, updateChecklistItem as updateChecklistItemApi, deleteChecklistItem as deleteChecklistItemApi } from '../../services/card.service'
 import {
   getBoardLabels,
   createLabel as createLabelApi,
@@ -274,6 +274,92 @@ export const toggleAttachmentCoverThunk = createAsyncThunk(
   }
 )
 
+// ── Checklists ────────────────────────────────────────────────────────────────
+
+export const fetchCardChecklists = createAsyncThunk(
+  'board/fetchCardChecklists',
+  async (cardId, { rejectWithValue }) => {
+    try {
+      const res = await getChecklistsApi(cardId)
+      return res.data.data.checklists
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to load checklists')
+    }
+  }
+)
+
+export const createChecklistThunk = createAsyncThunk(
+  'board/createChecklist',
+  async ({ cardId, listId, title }, { rejectWithValue }) => {
+    try {
+      const res = await createChecklistApi(cardId, title)
+      return { listId, cardId, checklist: res.data.data.checklist }
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to create checklist')
+    }
+  }
+)
+
+export const updateChecklistThunk = createAsyncThunk(
+  'board/updateChecklist',
+  async ({ checklistId, title }, { rejectWithValue }) => {
+    try {
+      const res = await updateChecklistApi(checklistId, title)
+      return { checklist: res.data.data.checklist }
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to update checklist')
+    }
+  }
+)
+
+export const deleteChecklistThunk = createAsyncThunk(
+  'board/deleteChecklist',
+  async ({ checklistId, cardId, listId }, { rejectWithValue }) => {
+    try {
+      await deleteChecklistApi(checklistId)
+      return { checklistId, cardId, listId }
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to delete checklist')
+    }
+  }
+)
+
+export const addItemThunk = createAsyncThunk(
+  'board/addChecklistItem',
+  async ({ checklistId, cardId, listId, content }, { rejectWithValue }) => {
+    try {
+      const res = await addChecklistItemApi(checklistId, content)
+      return { checklistId, cardId, listId, item: res.data.data.item }
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to add item')
+    }
+  }
+)
+
+export const updateItemThunk = createAsyncThunk(
+  'board/updateChecklistItem',
+  async ({ itemId, checklistId, cardId, listId, fields }, { rejectWithValue }) => {
+    try {
+      const res = await updateChecklistItemApi(itemId, fields)
+      return { checklistId, cardId, listId, item: res.data.data.item }
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to update item')
+    }
+  }
+)
+
+export const deleteItemThunk = createAsyncThunk(
+  'board/deleteChecklistItem',
+  async ({ itemId, checklistId, cardId, listId }, { rejectWithValue }) => {
+    try {
+      await deleteChecklistItemApi(itemId)
+      return { itemId, checklistId, cardId, listId }
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to delete item')
+    }
+  }
+)
+
 export const fetchCardActivity = createAsyncThunk(
   'board/fetchCardActivity',
   async (cardId, { rejectWithValue }) => {
@@ -288,29 +374,30 @@ export const fetchCardActivity = createAsyncThunk(
 
 /**
  * Persist card position/list change to backend after DnD.
- * Fire-and-forget style: state is already updated optimistically by the DnD handlers.
+ * Carries a snapshot of cards state so the rejected handler can roll back.
  */
 export const persistCardMoveThunk = createAsyncThunk(
   'board/persistCardMove',
-  async ({ cardId, listId, position }, { rejectWithValue }) => {
+  async ({ cardId, listId, position, snapshot }, { rejectWithValue }) => {
     try {
       await updateCardApi(cardId, { listId, position })
     } catch (err) {
-      return rejectWithValue(err.response?.data?.message || 'Failed to persist card move')
+      return rejectWithValue({ message: err.response?.data?.message || 'Failed to persist card move', snapshot })
     }
   }
 )
 
 /**
  * Persist list position change to backend after DnD.
+ * Carries a snapshot of lists state so the rejected handler can roll back.
  */
 export const persistListPositionThunk = createAsyncThunk(
   'board/persistListPosition',
-  async ({ listId, position }, { rejectWithValue }) => {
+  async ({ listId, position, snapshot }, { rejectWithValue }) => {
     try {
       await updateListApi(listId, { position })
     } catch (err) {
-      return rejectWithValue(err.response?.data?.message || 'Failed to persist list position')
+      return rejectWithValue({ message: err.response?.data?.message || 'Failed to persist list position', snapshot })
     }
   }
 )
@@ -325,10 +412,11 @@ export const moveCardFromModalThunk = createAsyncThunk(
     try {
       const state = getState()
       const targetCards = state.board.cards[toListId] || []
-      const lastPosition = targetCards.length > 0
-        ? Math.max(...targetCards.map((c) => c.position || 0))
+      // Append to end: position = last position + 2000 (consistent with calcPosition fallback)
+      const lastPos = targetCards.length > 0
+        ? (targetCards[targetCards.length - 1].position ?? 0)
         : 0
-      const position = lastPosition + 1024
+      const position = lastPos + 2000
 
       dispatch(moveCardBetweenLists({ cardId, fromListId, toListId }))
       await updateCardApi(cardId, { listId: toListId, position })
@@ -340,6 +428,19 @@ export const moveCardFromModalThunk = createAsyncThunk(
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Recomputes checklist_progress on a board card from the current cardChecklists state */
+const _syncChecklistProgress = (state, listId, cardId) => {
+  const total = state.cardChecklists.reduce((acc, cl) => acc + (cl.items?.length || 0), 0)
+  const completed = state.cardChecklists.reduce(
+    (acc, cl) => acc + (cl.items?.filter((i) => i.is_completed).length || 0),
+    0
+  )
+  if (state.cards[listId]) {
+    const card = state.cards[listId].find((c) => c.id === cardId)
+    if (card) card.checklist_progress = { total, completed }
+  }
+}
+
 const initialState = {
   boards: [],
   currentBoard: null,
@@ -348,12 +449,15 @@ const initialState = {
   boardLabels: [],
   cardComments: [],
   cardAttachments: [],
+  cardChecklists: [],
   cardActivity: [],
   openCardId: null,
+  dndError: null,
   loadingBoard: false,
   loadingLists: false,
   loadingComments: false,
   loadingAttachments: false,
+  loadingChecklists: false,
   loadingActivity: false,
 }
 
@@ -379,9 +483,11 @@ const boardSlice = createSlice({
       state.cards = {}
       state.boardLabels = []
       state.cardAttachments = []
+      state.cardChecklists = []
       state.loadingBoard = false
       state.loadingLists = false
       state.loadingAttachments = false
+      state.loadingChecklists = false
     },
     moveCard: (state, action) => {
       const { cardId, fromListId, toListId, toIndex } = action.payload
@@ -445,6 +551,9 @@ const boardSlice = createSlice({
     },
     setOpenCardId: (state, action) => {
       state.openCardId = action.payload
+    },
+    clearDndError: (state) => {
+      state.dndError = null
     },
     injectCardActivity: (state, action) => {
       const event = action.payload
@@ -641,6 +750,56 @@ const boardSlice = createSlice({
           if (card) card.cover_image_url = coverImageUrl
         }
       })
+      // Checklists
+      .addCase(fetchCardChecklists.pending, (state) => {
+        state.loadingChecklists = true
+      })
+      .addCase(fetchCardChecklists.fulfilled, (state, action) => {
+        state.loadingChecklists = false
+        state.cardChecklists = action.payload
+      })
+      .addCase(fetchCardChecklists.rejected, (state) => {
+        state.loadingChecklists = false
+        state.cardChecklists = []
+      })
+      .addCase(createChecklistThunk.fulfilled, (state, action) => {
+        const { checklist } = action.payload
+        state.cardChecklists.push({ ...checklist, items: checklist.items || [] })
+      })
+      .addCase(updateChecklistThunk.fulfilled, (state, action) => {
+        const { checklist } = action.payload
+        const idx = state.cardChecklists.findIndex((cl) => cl.id === checklist.id)
+        if (idx !== -1) state.cardChecklists[idx] = { ...state.cardChecklists[idx], title: checklist.title }
+      })
+      .addCase(deleteChecklistThunk.fulfilled, (state, action) => {
+        const { checklistId, cardId, listId } = action.payload
+        state.cardChecklists = state.cardChecklists.filter((cl) => cl.id !== checklistId)
+        _syncChecklistProgress(state, listId, cardId)
+      })
+      .addCase(addItemThunk.fulfilled, (state, action) => {
+        const { checklistId, cardId, listId, item } = action.payload
+        const cl = state.cardChecklists.find((cl) => cl.id === checklistId)
+        if (cl) {
+          if (!Array.isArray(cl.items)) cl.items = []
+          cl.items.push(item)
+        }
+        _syncChecklistProgress(state, listId, cardId)
+      })
+      .addCase(updateItemThunk.fulfilled, (state, action) => {
+        const { checklistId, cardId, listId, item } = action.payload
+        const cl = state.cardChecklists.find((cl) => cl.id === checklistId)
+        if (cl) {
+          const idx = (cl.items || []).findIndex((i) => i.id === item.id)
+          if (idx !== -1) cl.items[idx] = { ...cl.items[idx], ...item }
+        }
+        _syncChecklistProgress(state, listId, cardId)
+      })
+      .addCase(deleteItemThunk.fulfilled, (state, action) => {
+        const { itemId, checklistId, cardId, listId } = action.payload
+        const cl = state.cardChecklists.find((cl) => cl.id === checklistId)
+        if (cl) cl.items = (cl.items || []).filter((i) => i.id !== itemId)
+        _syncChecklistProgress(state, listId, cardId)
+      })
       // Activity
       .addCase(fetchCardActivity.pending, (state) => {
         state.loadingActivity = true
@@ -653,6 +812,17 @@ const boardSlice = createSlice({
         state.loadingActivity = false
         state.cardActivity = []
       })
+      // DnD persist — rollback state and surface error on failure
+      .addCase(persistCardMoveThunk.rejected, (state, action) => {
+        const { snapshot } = action.payload || {}
+        if (snapshot) state.cards = snapshot
+        state.dndError = 'Không thể lưu vị trí card. Vui lòng thử lại.'
+      })
+      .addCase(persistListPositionThunk.rejected, (state, action) => {
+        const { snapshot } = action.payload || {}
+        if (snapshot) state.lists = snapshot
+        state.dndError = 'Không thể lưu vị trí list. Vui lòng thử lại.'
+      })
   },
 })
 
@@ -660,6 +830,6 @@ export const {
   setBoards, setCurrentBoard, setLists, setCards, clearBoard,
   moveCard, moveCardBetweenLists, moveList, addCard, updateCard, deleteCard,
   addList, updateList, deleteList,
-  setOpenCardId, injectCardActivity,
+  setOpenCardId, injectCardActivity, clearDndError,
 } = boardSlice.actions
 export default boardSlice.reducer

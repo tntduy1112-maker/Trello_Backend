@@ -114,7 +114,7 @@ export default function CardItem({ card, listId, onClick }) {
           )}
 
           {/* Checklist progress */}
-          {card.checklist_progress && (
+          {card.checklist_progress?.total > 0 && (
             <span className={`flex items-center gap-1 text-[10px] ${
               card.checklist_progress.completed === card.checklist_progress.total
                 ? 'text-green-400'

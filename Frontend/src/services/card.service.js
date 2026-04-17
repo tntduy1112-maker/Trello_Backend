@@ -22,3 +22,12 @@ export const deleteAttachment = (cardId, attachmentId) =>
   api.delete(`/cards/${cardId}/attachments/${attachmentId}`)
 export const toggleAttachmentCover = (cardId, attachmentId) =>
   api.patch(`/cards/${cardId}/attachments/${attachmentId}/cover`)
+
+// ── Checklists ────────────────────────────────────────────────────────────────
+export const getChecklists = (cardId) => api.get(`/cards/${cardId}/checklists`)
+export const createChecklist = (cardId, title) => api.post(`/cards/${cardId}/checklists`, { title })
+export const updateChecklist = (checklistId, title) => api.put(`/checklists/${checklistId}`, { title })
+export const deleteChecklist = (checklistId) => api.delete(`/checklists/${checklistId}`)
+export const addChecklistItem = (checklistId, content) => api.post(`/checklists/${checklistId}/items`, { content })
+export const updateChecklistItem = (itemId, fields) => api.put(`/checklist-items/${itemId}`, fields)
+export const deleteChecklistItem = (itemId) => api.delete(`/checklist-items/${itemId}`)
