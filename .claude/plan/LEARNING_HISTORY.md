@@ -394,7 +394,7 @@ Trong form context hoặc DOM nesting phức tạp, `<button>` nhận pointer ev
 
 ---
 
-## Tổng kết tiến độ
+## Tổng kết tiến độ (sau 15/4)
 
 | Phase | Backend | Frontend |
 |---|:---:|:---:|
@@ -402,7 +402,308 @@ Trong form context hoặc DOM nesting phức tạp, `<button>` nhận pointer ev
 | Phase 2 — Lists & Cards | ✅ Done | ✅ Done (load, create, save, delete) |
 | Phase 2 — Labels | ✅ Done (7 endpoints) | ✅ Done (full picker UI) |
 | Phase 2 — DnD persist position | ✅ Ready (endpoint có sẵn) | ⏳ Chưa gọi PUT sau onDragEnd |
-| Phase 3 — Checklists, Comments | ⏳ Chưa bắt đầu | ⏳ Chưa bắt đầu |
+| Phase 3 — Comments | ✅ Done (4 endpoints) | ✅ Done (threaded UI) |
+| Phase 3 — Activity Logs | ✅ Done (2 endpoints) | ✅ Done (Activity tab) |
+| Phase 3 — Attachments | ✅ Done (4 endpoints + MinIO) | ✅ Done (upload/download/cover) |
+| Phase 3 — Board Invitations | ✅ Done (token-based email flow) | ✅ Done (AcceptInvitePage) |
+| Phase 3 — Card Completion | ✅ Done (is_completed toggle) | ✅ Done (visual feedback) |
+| Phase 3 — Security hardening | ✅ Done (hashed tokens, blacklist, rotation) | ✅ Done (interceptor queue) |
 | Phase 4 — Notifications | ⏳ Chưa bắt đầu | ⏳ Chưa bắt đầu |
 
-**Bước tiếp theo:** Persist DnD position vào DB (gọi `PUT /cards/:cardId` và `PUT /lists/:listId` với position mới sau `onDragEnd`). Hoặc tiếp tục Phase 3 — Comments API + UI.
+**Bước tiếp theo:** DnD persist position (gọi `PUT /cards/:cardId` và `PUT /lists/:listId` với position mới sau `onDragEnd`). Hoặc Phase 4 — Real-time Notifications với WebSocket/SSE.
+
+---
+
+---
+
+## 16 tháng 4, 2026 — Activity Logs, Comments, Board Invitations, Card Completion, Attachments, Security Hardening
+
+### Yêu cầu cụ thể đã đặt ra
+
+| # | Yêu cầu | Chi tiết yêu cầu | Kết quả |
+|---|---|---|---|
+| 1 | Implement Activity Logs + Comments (full-stack) | Backend modules + Frontend tab trong CardDetailModal | Activity Logs: 2 endpoints, fire-and-forget logger; Comments: 4 endpoints, threaded 1-level nesting |
+| 2 | Implement Board Invitation + Card Completion | Email invite flow cho cả user mới/cũ, toggle `is_completed` trên card | Board invitations: migration + 5 endpoints; Card completion: toggle UI + visual feedback |
+| 3 | Implement Attachments (full-stack) | Upload lên MinIO, download, xóa, toggle cover image | 4 endpoints, multer memoryStorage, File System Access API, per-file spinner, toast |
+| 4 | Security & Infrastructure hardening | Hashed refresh tokens, token blacklist (Redis), token rotation, MinIO setup | 3 migrations, tokenCrypto util (AES-256-GCM), redis config, storage util |
+| 5 | Đổi tên docs về UPPER_CASE | Rename plan files cho consistent | `fffc620` — rename docs + move ARCHITECTURE.md |
+
+---
+
+### Chi tiết kỹ thuật đã làm
+
+#### A. Activity Logs Module
+
+**Backend `Backend/src/utils/activityLogger.js`** — fire-and-forget singleton:
+```js
+const logActivity = async ({ userId, entityType, entityId, boardId, action, metadata }) => {
+  try { await query(INSERT INTO activity_logs ...) }
+  catch (err) { console.error('[activityLogger] ...') } // never throws
+}
+```
+**Nguyên tắc thiết kế:** logging failure không bao giờ được phá vỡ main request → `try/catch` nuốt mọi lỗi.
+
+Hook vào `cards.service` (created/updated/deleted) và `lists.service` (created/deleted) với `action` string như `card.created`, `card.updated`, `list.created`.
+
+**Endpoints:**
+| Endpoint | Mô tả |
+|---|---|
+| `GET /boards/:boardId/activity` | Activity feed của cả board |
+| `GET /cards/:cardId/activity` | Activity feed của card cụ thể |
+
+**Frontend:** `fetchCardActivityThunk` trong `boardSlice`, `cardActivity[]` state, tab "Activity" trong `CardDetailModal`.
+
+#### B. Comments Module (threaded 1 level)
+
+**Backend `comments.model.js`** — LATERAL subquery để aggregate replies:
+```sql
+LEFT JOIN LATERAL (
+  SELECT json_agg(r ORDER BY r.created_at) AS replies
+  FROM comments r WHERE r.parent_id = c.id
+) replies ON true
+WHERE c.parent_id IS NULL  -- chỉ lấy top-level comments
+```
+
+**Quy tắc nesting:** chỉ cho phép 1 level — reply-to-reply bị reject ngay ở service layer:
+```js
+if (parent.parent_id) { throw new Error('Cannot reply to a reply') }
+```
+
+**Endpoints:**
+| Endpoint | Mô tả |
+|---|---|
+| `GET /cards/:cardId/comments` | Lấy comments (kèm replies) |
+| `POST /cards/:cardId/comments` | Tạo comment (hoặc reply với `parentId`) |
+| `PUT /comments/:commentId` | Sửa comment (chỉ owner) |
+| `DELETE /comments/:commentId` | Xóa comment (chỉ owner) |
+
+**Frontend:** 4 thunks trong `boardSlice`, `cardComments[]` state với nested reply support. `CardDetailModal` có threaded UI với inline edit, delete, reply form, spinner per action.
+
+#### C. Board Invitations Module
+
+**Migration `002_board_invitations.sql`** — bảng `board_invitations` với `token`, `email`, `role`, `invited_by`, `expires_at`, `accepted_at`.
+
+**2 luồng invite:**
+- **User đã có tài khoản:** thêm trực tiếp vào `board_members`, gửi email thông báo `sendBoardAddedEmail`
+- **User mới (email chưa trong DB):** tạo row `board_invitations` với UUID token, gửi email với link `sendBoardInvitationEmail`
+
+**Endpoints:**
+| Endpoint | Mô tả |
+|---|---|
+| `POST /boards/:boardId/invite` | Invite member (2 luồng tự động) |
+| `GET /boards/:boardId/invitations` | Lấy danh sách pending invitations |
+| `DELETE /boards/:boardId/invitations/:invId` | Thu hồi lời mời |
+| `GET /invitations/preview?token=` | Xem thông tin lời mời (public, không cần auth) |
+| `POST /invitations/accept?token=` | Chấp nhận lời mời (cần auth, email phải khớp) |
+
+**Frontend `AcceptInvitePage.jsx`:**
+- Nếu chưa đăng nhập → redirect `/login?redirect=/accept-invite?token=...`
+- `LoginPage` sau khi login thành công → đọc `redirect` query param → navigate về
+- `RegisterPage` đọc `?email=` query param → pre-fill email field
+
+#### D. Card Completion Toggle
+
+Backend: cột `is_completed BOOLEAN DEFAULT false` trong bảng `cards`. `PUT /cards/:cardId` đã nhận field này.
+
+Frontend:
+- `CardDetailModal`: checkbox "Đánh dấu hoàn thành" với `is_completed` state, dispatch `saveCardThunk`
+- `CardItem`: visual feedback — `line-through` title, opacity giảm, badge "Hoàn thành" màu xanh khi completed
+
+#### E. Attachments Module (MinIO storage)
+
+**Upload flow:**
+1. Multer `memoryStorage()` — file không lưu disk, buffer trong RAM
+2. Validate: size ≤ 10 MB, MIME type trong whitelist (images, PDF, Office docs, ZIP, text)
+3. `uploadFile()` → MinIO `putObject` với UUID-prefixed object name → `getPublicUrl()`
+4. INSERT vào bảng `attachments` với `object_name` để có thể xóa sau
+
+**Endpoints:**
+| Endpoint | Mô tả |
+|---|---|
+| `POST /cards/:cardId/attachments` | Upload file (multipart/form-data) |
+| `GET /cards/:cardId/attachments` | Lấy danh sách attachments |
+| `DELETE /cards/:cardId/attachments/:id` | Xóa attachment (owner hoặc board admin/owner) |
+| `PATCH /cards/:cardId/attachments/:id/cover` | Toggle cover image |
+
+**Cover image logic:** Chỉ file ảnh mới có thể set làm cover. Toggle: nếu đang là cover → unset; nếu không → set và đồng bộ `cards.cover_image_url`.
+
+**Frontend download:** Dùng **File System Access API** (`showSaveFilePicker`) → fetch blob → write stream. Fallback: tạo anchor `<a download>` nếu browser không hỗ trợ. Per-file loading spinner, fade-in toast thành công.
+
+**Frontend `CardItem.jsx`:** Hiển thị cover image ở đầu card nếu `card.cover_image_url` tồn tại. Badge attachment count từ `card.attachment_count` (tính bằng LATERAL subquery trong `cards.model.js`).
+
+#### F. Security Hardening
+
+**Migration 003 — Hashed Refresh Tokens:**
+- Thêm cột `token_hash VARCHAR(64)` vào `refresh_tokens`
+- Token gốc gửi cho client; hash SHA-256 lưu DB → nếu DB bị leak không thể dùng token gốc
+
+**Migration 004 — Token Blacklist (Redis):**
+- Bảng `token_blacklist(jti, expires_at)` trong PostgreSQL (backup)
+- Redis làm primary store: `SET jti "1" EX <ttl>` — O(1) lookup, auto-expire
+
+**`tokenCrypto.js` — AES-256-GCM encryption:**
+```js
+// Format: [iv 24 hex][authTag 32 hex][ciphertext n hex]
+const encrypt = (plaintext) => { ... } // 96-bit IV, GCM auth tag
+const decrypt = (ciphertext) => { ... } // throws nếu tampered
+```
+
+**Token rotation:** Mỗi khi dùng refresh token → issue token mới + revoke token cũ (một lần dùng). Phát hiện reuse → revoke toàn bộ family.
+
+**`authenticate.js` middleware** cập nhật: verify JWT signature + check `jti` không trong blacklist (Redis lookup).
+
+**`docker-compose.yml`** cập nhật: thêm service MinIO (S3-compatible) và Redis.
+
+---
+
+### Đã học
+
+#### Fire-and-forget pattern cho logging
+Logger dùng `try/catch` nuốt lỗi — một logging failure không bao giờ được interrupt main request. Đây là nguyên tắc: observability tools (logs, metrics, traces) là secondary concern, không được ảnh hưởng primary business logic.
+
+#### Threaded comments với LATERAL subquery
+Aggregate replies trong cùng một query bằng LATERAL — không cần N+1 queries. Enforce nesting limit ở service layer (không phải DB) để linh hoạt thay đổi sau.
+
+#### Token-based invitation flow (2 luồng)
+- User tồn tại → add trực tiếp, email thông báo (no token needed)
+- User mới → UUID token, email với link, accept flow cần verify email khớp với token
+- `preview` endpoint public (không cần auth) → frontend có thể hiển thị thông tin board trước khi user đăng nhập
+
+#### Refresh token security: hash + rotation + blacklist
+3 lớp bảo vệ:
+1. **Hash in DB:** `SHA-256(token)` lưu DB → DB leak không dùng được token
+2. **Rotation:** mỗi refresh → issue token mới, revoke cũ → replay attack bất khả thi
+3. **Blacklist (Redis):** logout → `jti` vào blacklist; access token ngắn hạn nhưng vẫn bị revoke ngay
+
+#### MinIO là S3-compatible object storage tự host
+- API giống AWS S3 (dùng `minio` npm SDK)
+- `memoryStorage()` với multer → không cần disk space, phù hợp container
+- Object name = `folder/uuid-originalname` → unique, không conflict
+- `getPublicUrl()` cho CDN-style access; `getPresignedUrl()` cho private files với expiry
+
+#### File System Access API cho download
+```js
+const handle = await window.showSaveFilePicker({ suggestedName: filename })
+const writable = await handle.createWritable()
+await writable.write(blob)
+await writable.close()
+```
+Browser native save dialog — không cần tên file hardcode. Fallback anchor download cho Firefox/Safari chưa hỗ trợ.
+
+---
+
+---
+
+## 17 tháng 4, 2026 — Reactive Activity Stream (Phase 1) + Bug Fix: Comment Avatar
+
+### Yêu cầu cụ thể đã đặt ra
+
+| # | Yêu cầu | Chi tiết yêu cầu | Kết quả |
+|---|---|---|---|
+| 1 | Phân tích & đề xuất product logic | Screenshot Card Detail modal + PM proposal về Reactive Activity Stream | Phân tích 7 gaps trong PM spec, đề xuất kiến trúc SSE topic routing, presence registry, Type B batching server-side, optimistic temp-ID swap |
+| 2 | Implement Reactive Activity Stream Phase 1 | "yes" (implement proposal) | 5 file thay đổi: notificationSender, activityLogger, boardSlice, useNotificationStream, CardDetailModal |
+| 3 | Fix bug: Comment avatar hiển thị "?" | Screenshot comment vừa post hiện avatar "?" thay vì "DT" | Fix `createComment` và `updateComment` trong `comments.model.js` dùng CTE JOIN |
+
+---
+
+### Chi tiết kỹ thuật đã làm
+
+#### A. Reactive Activity Stream — Phase 1 Foundation
+
+**Vấn đề:** Card Detail modal fetch activity 1 lần khi mở, không cập nhật khi teammate thay đổi card.
+
+**Giải pháp:** Tái dụng kênh SSE hiện có (1 kết nối duy nhất per user), thêm `topic` field để phân biệt event loại.
+
+**Backend — `notificationSender.js`:**
+```js
+const broadcastCardActivity = async (boardId, activityRow) => {
+  const result = await query('SELECT user_id FROM board_members WHERE board_id = $1', [boardId])
+  const payload = { topic: 'card_activity', ...activityRow }
+  result.rows.forEach(({ user_id }) => pushSSE(String(user_id), payload))
+}
+```
+Fan-out tới tất cả board members đang kết nối — không cần kênh mới.
+
+**Backend — `activityLogger.js`:**
+Thay `INSERT ... RETURNING *` (chỉ có raw row) bằng CTE:
+```sql
+WITH inserted AS (INSERT INTO activity_logs ... RETURNING *)
+SELECT i.*, json_build_object('full_name', u.full_name, 'avatar_url', u.avatar_url) AS "user"
+FROM inserted i LEFT JOIN users u ON u.id = i.user_id
+```
+Trả về row đầy đủ trong 1 query, rồi gọi `broadcastCardActivity` fire-and-forget.
+
+**Frontend — `boardSlice.js`:**
+- Thêm `openCardId: null` vào state
+- `setOpenCardId(cardId)` — set khi modal mở, clear khi đóng
+- `injectCardActivity(event)` — prepend vào `cardActivity[]` nếu:
+  1. `event.entity_id === openCardId` (đúng card đang mở)
+  2. `event.id` chưa có trong array (de-dup)
+
+**Frontend — `useNotificationStream.js`:**
+```js
+if (data.topic === 'card_activity') {
+  dispatch(injectCardActivity(data))
+} else {
+  dispatch(addNotification(data))
+}
+```
+Topic routing trên 1 EventSource duy nhất — không thêm kết nối.
+
+**Frontend — `CardDetailModal.jsx`:**
+```js
+useEffect(() => {
+  if (isOpen && card?.id) {
+    dispatch(setOpenCardId(card.id))
+    // ... fetch comments, activity, attachments
+  } else {
+    dispatch(setOpenCardId(null))
+  }
+}, [isOpen, card?.id, dispatch])
+```
+
+#### B. Bug Fix: Comment Avatar "?" Placeholder
+
+**Root cause:** `createComment` và `updateComment` trong `comments.model.js` dùng `RETURNING *` — trả về raw row không có `user` object. Frontend render `c.user?.full_name` → `undefined` → Avatar fallback `"?"`.
+
+`findByCardId` (GET) thì có JOIN đầy đủ, nhưng CREATE/UPDATE thì không → mất nhất quán.
+
+**Fix:** Đổi cả 2 hàm sang CTE:
+```sql
+-- createComment
+WITH inserted AS (INSERT INTO comments ... RETURNING *)
+SELECT i.*, json_build_object('id', u.id, 'full_name', u.full_name, 'avatar_url', u.avatar_url) AS "user"
+FROM inserted i LEFT JOIN users u ON u.id = i.user_id
+
+-- updateComment
+WITH updated AS (UPDATE comments SET ... WHERE id = $1 RETURNING *)
+SELECT u.*, json_build_object(...) AS "user"
+FROM updated u LEFT JOIN users usr ON usr.id = u.user_id
+```
+Kết quả: cả 3 operations (GET, CREATE, UPDATE) trả về cùng shape → Avatar render đúng ngay khi post.
+
+---
+
+### Đã học
+
+#### Tái dụng kênh SSE với topic routing thay vì mở kết nối mới
+Thay vì mở EventSource thứ 2 cho card activity, thêm `topic` field vào payload và route trong hook:
+- `card_activity` → `injectCardActivity`
+- others → `addNotification`
+Không thêm kết nối, không thêm endpoint, zero client-side complexity.
+
+#### `openCardId` là "scope guard" cho live injection
+`injectCardActivity` phải check `state.openCardId === event.entity_id` trước khi prepend. Nếu không, events từ các card khác (cùng board) sẽ lẫn vào activity list của card đang xem.
+
+#### CTE là pattern chuẩn cho INSERT/UPDATE cần trả về enriched data
+3 lần dùng CTE trong project này (activityLogger, createComment, updateComment) — cùng một pattern:
+```sql
+WITH cte AS (mutation RETURNING *)
+SELECT cte.*, join_data FROM cte LEFT JOIN related_table ...
+```
+Một round-trip, data đầy đủ, không cần query riêng sau mutation.
+
+#### Inconsistency giữa GET và CREATE response là nguồn gốc avatar bug
+`findByCardId` JOIN user → có `user` object. `createComment` RETURNING * → không có. Frontend dùng cùng render code cho cả 2 → lỗi chỉ thấy khi tạo mới (optimistic state), không thấy khi reload (data từ GET). Loại lỗi này khó debug vì GET hoạt động đúng.
+
+**Rule:** Mọi mutation endpoint trả về entity đều phải trả về cùng shape với GET endpoint của entity đó.

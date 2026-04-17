@@ -52,7 +52,8 @@ Frontend/src/
 │   ├── useBoard.js
 │   ├── useClickOutside.js
 │   ├── useDebounce.js
-│   └── usePermission.js
+│   ├── usePermission.js
+│   └── useNotificationStream.js  ← SSE hook; topic routing card_activity / notification
 ├── pages/
 │   ├── auth/
 │   │   ├── LoginPage.jsx
@@ -68,8 +69,10 @@ Frontend/src/
 │   ├── boards/
 │   │   ├── BoardPage.jsx            ← /board/:boardId (Kanban canvas)
 │   │   └── CreateBoardModal.jsx     ← modal tạo board mới
-│   └── profile/
-│       └── ProfilePage.jsx          ← /profile
+│   ├── profile/
+│   │   └── ProfilePage.jsx          ← /profile
+│   └── invitations/
+│       └── AcceptInvitePage.jsx     ← /accept-invite?token= (board invite flow)
 ├── redux/
 │   ├── store.js
 │   └── slices/
@@ -117,23 +120,30 @@ Redux Store
 │   ├── cards {}              ← { [listId]: Card[] }
 │   ├── boardLabels []        ← labels của board hiện tại
 │   ├── cardComments []       ← comments của card đang mở (threaded: top-level có replies[])
+│   ├── cardAttachments []    ← attachments của card đang mở
 │   ├── cardActivity []       ← activity logs của card đang mở
-│   ├── loadingBoard
-│   ├── loadingLists
-│   ├── loadingComments
-│   └── loadingActivity
+│   ├── openCardId            ← id của card modal đang mở (dùng cho Reactive Stream)
+│   ├── loadingBoard / loadingLists / loadingComments / loadingAttachments / loadingActivity
 │       Thunks: fetchBoard, fetchBoardLists,
 │               createListThunk, createCardThunk,
-│               saveCardThunk, deleteCardThunk,
+│               saveCardThunk, deleteCardThunk, moveCardFromModalThunk,
+│               persistCardMoveThunk, persistListPositionThunk,
 │               fetchBoardLabels, createLabelThunk,
 │               updateLabelThunk, deleteLabelThunk,
 │               addCardLabelThunk, removeCardLabelThunk,
 │               fetchCardComments, addCommentThunk,
 │               editCommentThunk, deleteCommentThunk,
+│               fetchCardAttachments, addAttachmentThunk,
+│               deleteAttachmentThunk, toggleAttachmentCoverThunk,
 │               fetchCardActivity
+│       Reducers: setOpenCardId, injectCardActivity (Reactive Stream de-dup)
 │
 └── notificationSlice
-    └── notifications []      ← (placeholder, chưa connect API)
+    ├── notifications []      ← real-time via SSE + REST pagination
+    └── unreadCount           ← badge count trên bell icon
+        Thunks: fetchNotificationsThunk, fetchUnreadCountThunk,
+                markReadThunk, markAllReadThunk, deleteNotificationThunk
+        Reducer: addNotification (SSE inject)
 ```
 
 ### Chiến lược state:
@@ -175,7 +185,8 @@ services/ (mỗi file là một domain):
   label.service.js       → getBoardLabels, createLabel, updateLabel, deleteLabel,
                            getCardLabels, addCardLabel, removeCardLabel
   activityLog.service.js → getCardActivity, getBoardActivity
-  notification.service.js → (placeholder)
+  notification.service.js → getNotifications, getUnreadCount, markNotificationRead,
+                            markAllNotificationsRead, deleteNotification
 ```
 
 ---
@@ -282,7 +293,10 @@ Mở overlay modal khi click vào `CardItem`, không navigate sang trang mới.
 | Priority | ✅ | 4 options (Low/Medium/High/Critical), highlight lựa chọn hiện tại |
 | Checklists | ⏳ | Hiển thị nếu `card.checklist_progress` có, chưa có API |
 | Comments | ✅ | Tab "Bình luận": tạo mới, reply (1 cấp), edit inline (tác giả), xóa, spinner states, "(đã sửa)" |
-| Activity Log | ✅ | Tab "Hoạt động": load từ Redux `cardActivity`, mô tả tiếng Việt, avatar, relative time |
+| Activity Log | ✅ | Tab "Hoạt động": load từ Redux `cardActivity`, **live update via SSE** (injectCardActivity), mô tả tiếng Việt, avatar, relative time |
+| Attachments | ✅ | Upload (multer multipart), download (File System Access API + fallback), xóa, toggle cover image |
+| Card Completion | ✅ | Checkbox "Đánh dấu hoàn thành", visual: title line-through + badge "Hoàn thành" trên CardItem |
+| Move to List | ✅ | Dropdown chọn list khác → `moveCardFromModalThunk` (optimistic + persist) |
 
 **Nút "Lưu trữ card" (save flow):**
 ```
@@ -336,15 +350,23 @@ boardMembers (từ props, fetch từ GET /boards/:boardId/members)
 - [ ] **Persist DnD position vào DB** (gọi PUT sau `onDragEnd`)
 - [x] Labels & label picker (tạo, toggle assign, edit, xoá)
 
-### Phase 3 — Advanced Card Features 🔄 Đang thực hiện
-- [x] Comments API + UI (tạo, reply, edit, xóa — kết nối API thật)
+### Phase 3 — Advanced Card Features ✅ Hoàn thành
+- [x] Comments API + UI (tạo, reply, edit, xóa — CTE fix: user info đầy đủ khi tạo/sửa)
 - [x] Activity log trên card (tab Hoạt động trong CardDetailModal)
+- [x] Attachments upload (MinIO, cover image, per-file spinner, File System Access API download)
+- [x] Card completion toggle (`is_completed`, visual feedback)
+- [x] Board invitation (AcceptInvitePage, pre-fill email on register)
 - [ ] Checklists & checklist items
-- [ ] Attachments upload
 
-### Phase 4 — Notifications ⏳
-- [ ] Notification bell + dropdown (UI placeholder đã có)
-- [ ] Connect notification API
+### Phase 4 — Notifications ✅ Hoàn thành
+- [x] Notification bell + unread badge (real-time từ SSE)
+- [x] NotificationDropdown (mark read, mark all, delete, icons by type, relative time)
+- [x] useNotificationStream hook (EventSource, topic routing)
+
+### Phase 5 — Reactive Activity Stream 🔄 Đang thực hiện
+- [x] Phase 1: Foundation — injectCardActivity reducer, setOpenCardId, SSE topic routing
+- [ ] Phase 2: Scroll-aware prepend, highlight fade, tab badge
+- [ ] Phase 3: Type B batching, reconnect refetch, "Live updates paused" banner
 
 ---
 

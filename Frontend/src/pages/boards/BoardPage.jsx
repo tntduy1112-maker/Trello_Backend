@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { useSelector, useDispatch } from 'react-redux'
+import { useSelector, useDispatch, useStore } from 'react-redux'
 import {
   DndContext,
   DragOverlay,
@@ -18,7 +18,7 @@ import {
   Plus, Globe, Lock, Users, UserPlus, Filter,
   ArrowLeft, MoreHorizontal, Star
 } from 'lucide-react'
-import { setLists, setCards, clearBoard, fetchBoard, fetchBoardLists, fetchBoardLabels, createListThunk } from '../../redux/slices/boardSlice'
+import { setLists, setCards, clearBoard, fetchBoard, fetchBoardLists, fetchBoardLabels, createListThunk, persistCardMoveThunk, persistListPositionThunk } from '../../redux/slices/boardSlice'
 import { getBoardMembers } from '../../services/board.service'
 import Navbar from '../../components/layout/Navbar'
 import ListColumn from '../../components/board/ListColumn'
@@ -80,6 +80,8 @@ export default function BoardPage() {
   const { currentBoard, lists, cards, loadingBoard } = useSelector((state) => state.board)
   const { user } = useSelector((state) => state.auth)
 
+  const store = useStore()
+
   const [activeCard, setActiveCard] = useState(null)
   const [activeCardListId, setActiveCardListId] = useState(null)
   const [selectedCard, setSelectedCard] = useState(null)
@@ -121,6 +123,19 @@ export default function BoardPage() {
   const listIds = lists.map((l) => `list-${l.id}`)
   const members = user ? [user] : []
 
+  // ListColumn registers TWO dnd zones:
+  //   useSortable  → id = 'list-{uuid}'  (for list reordering)
+  //   useDroppable → id = '{uuid}'       (for card drops)
+  // When over.type === 'list' from the sortable zone, over.id has the 'list-' prefix.
+  // Strip it so we always work with the plain list UUID.
+  const getOverListId = (over) => {
+    if (!over) return null
+    const type = over.data.current?.type
+    if (type === 'card') return over.data.current?.listId
+    if (type === 'list') return String(over.id).replace(/^list-/, '')
+    return String(over.id).replace(/^list-/, '')
+  }
+
   const handleDragStart = (event) => {
     const { active } = event
     if (active.data.current?.type === 'card') {
@@ -132,23 +147,34 @@ export default function BoardPage() {
   const handleDragOver = (event) => {
     const { active, over } = event
     if (!over) return
-    const activeType = active.data.current?.type
-    const overType = over.data.current?.type
-    if (activeType !== 'card') return
+    if (active.data.current?.type !== 'card') return
+
     const activeListId = active.data.current?.listId
-    const overListId = overType === 'card' ? over.data.current?.listId : over.id
-    if (activeListId === overListId) return
-    const newCards = { ...cards }
-    const activeCards = [...(newCards[activeListId] || [])]
-    const overCards = [...(newCards[overListId] || [])]
+    const overListId = getOverListId(over)
+    if (!overListId || activeListId === overListId) return
+
+    // Read fresh state to avoid stale closure
+    const liveCards = store.getState().board.cards
+    const activeCards = [...(liveCards[activeListId] || [])]
+    const overCards   = [...(liveCards[overListId]   || [])]
+
     const activeIdx = activeCards.findIndex((c) => c.id === active.id)
     if (activeIdx === -1) return
     const [movedCard] = activeCards.splice(activeIdx, 1)
-    const overIdx = overType === 'card'
+
+    const overIdx = over.data.current?.type === 'card'
       ? overCards.findIndex((c) => c.id === over.id)
       : overCards.length
-    overCards.splice(overIdx, 0, movedCard)
-    dispatch(setCards({ ...newCards, [activeListId]: activeCards, [overListId]: overCards }))
+    overCards.splice(Math.max(overIdx, 0), 0, movedCard)
+
+    dispatch(setCards({ ...liveCards, [activeListId]: activeCards, [overListId]: overCards }))
+  }
+
+  // Calculate a float position that places an item between its new neighbors.
+  const calcPosition = (items, toIdx) => {
+    const prev = toIdx > 0 ? items[toIdx - 1].position : 0
+    const next = toIdx < items.length - 1 ? items[toIdx + 1].position : (items[toIdx - 1]?.position ?? 0) + 2
+    return (prev + next) / 2
   }
 
   const handleDragEnd = (event) => {
@@ -156,26 +182,49 @@ export default function BoardPage() {
     setActiveCard(null)
     setActiveCardListId(null)
     if (!over) return
+
     const activeType = active.data.current?.type
-    const overType = over.data.current?.type
+
+    // ── LIST REORDER ──────────────────────────────────────────────────────────
     if (activeType === 'list') {
       const fromIdx = lists.findIndex((l) => `list-${l.id}` === active.id)
-      const toIdx = lists.findIndex((l) => `list-${l.id}` === over.id)
-      if (fromIdx !== toIdx && fromIdx !== -1 && toIdx !== -1) {
-        dispatch(setLists(arrayMove(lists, fromIdx, toIdx)))
-      }
+      const toIdx   = lists.findIndex((l) => `list-${l.id}` === over.id)
+      if (fromIdx === toIdx || fromIdx === -1 || toIdx === -1) return
+      const newLists = arrayMove(lists, fromIdx, toIdx)
+      dispatch(setLists(newLists))
+      const newPos = calcPosition(newLists, toIdx)
+      dispatch(persistListPositionThunk({ listId: newLists[toIdx].id, position: newPos }))
       return
     }
+
+    // ── CARD MOVE ─────────────────────────────────────────────────────────────
     if (activeType === 'card') {
-      const listId = active.data.current?.listId
-      if (overType === 'card' && over.data.current?.listId === listId) {
-        const listCards = [...(cards[listId] || [])]
+      const originalListId = active.data.current?.listId
+      const targetListId   = getOverListId(over)
+      if (!targetListId) return
+
+      // Read fresh state (handleDragOver already updated it)
+      const liveCards = store.getState().board.cards
+
+      // Same-list reorder
+      if (targetListId === originalListId) {
+        const listCards = [...(liveCards[originalListId] || [])]
         const fromIdx = listCards.findIndex((c) => c.id === active.id)
-        const toIdx = listCards.findIndex((c) => c.id === over.id)
-        if (fromIdx !== toIdx) {
-          dispatch(setCards({ ...cards, [listId]: arrayMove(listCards, fromIdx, toIdx) }))
-        }
+        const toIdx   = listCards.findIndex((c) => c.id === over.id)
+        if (fromIdx === toIdx || fromIdx === -1 || toIdx === -1) return
+        const newListCards = arrayMove(listCards, fromIdx, toIdx)
+        dispatch(setCards({ ...liveCards, [originalListId]: newListCards }))
+        const newPos = calcPosition(newListCards, toIdx)
+        dispatch(persistCardMoveThunk({ cardId: active.id, listId: originalListId, position: newPos }))
+        return
       }
+
+      // Cross-list move — visual state already updated by handleDragOver.
+      const targetCards = liveCards[targetListId] || []
+      const cardIdx = targetCards.findIndex((c) => c.id === active.id)
+      if (cardIdx === -1) return
+      const newPos = calcPosition(targetCards, cardIdx)
+      dispatch(persistCardMoveThunk({ cardId: active.id, listId: targetListId, position: newPos }))
     }
   }
 

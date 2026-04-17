@@ -1,6 +1,6 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit'
 import { getBoard } from '../../services/board.service'
-import { getLists, createList } from '../../services/list.service'
+import { getLists, createList, updateList as updateListApi } from '../../services/list.service'
 import { getCards, createCard, updateCard as updateCardApi, deleteCard as deleteCardApi, getComments as getCommentsApi, addComment as addCommentApi, updateComment as updateCommentApi, deleteComment as deleteCommentApi, getAttachments as getAttachmentsApi, addAttachment as addAttachmentApi, deleteAttachment as deleteAttachmentApi, toggleAttachmentCover as toggleAttachmentCoverApi } from '../../services/card.service'
 import {
   getBoardLabels,
@@ -286,6 +286,58 @@ export const fetchCardActivity = createAsyncThunk(
   }
 )
 
+/**
+ * Persist card position/list change to backend after DnD.
+ * Fire-and-forget style: state is already updated optimistically by the DnD handlers.
+ */
+export const persistCardMoveThunk = createAsyncThunk(
+  'board/persistCardMove',
+  async ({ cardId, listId, position }, { rejectWithValue }) => {
+    try {
+      await updateCardApi(cardId, { listId, position })
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to persist card move')
+    }
+  }
+)
+
+/**
+ * Persist list position change to backend after DnD.
+ */
+export const persistListPositionThunk = createAsyncThunk(
+  'board/persistListPosition',
+  async ({ listId, position }, { rejectWithValue }) => {
+    try {
+      await updateListApi(listId, { position })
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to persist list position')
+    }
+  }
+)
+
+/**
+ * Move a card to a different list from the Card Detail modal.
+ * Optimistically updates Redux state then persists to backend.
+ */
+export const moveCardFromModalThunk = createAsyncThunk(
+  'board/moveCardFromModal',
+  async ({ cardId, fromListId, toListId }, { getState, dispatch, rejectWithValue }) => {
+    try {
+      const state = getState()
+      const targetCards = state.board.cards[toListId] || []
+      const lastPosition = targetCards.length > 0
+        ? Math.max(...targetCards.map((c) => c.position || 0))
+        : 0
+      const position = lastPosition + 1024
+
+      dispatch(moveCardBetweenLists({ cardId, fromListId, toListId }))
+      await updateCardApi(cardId, { listId: toListId, position })
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to move card')
+    }
+  }
+)
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 const initialState = {
@@ -297,6 +349,7 @@ const initialState = {
   cardComments: [],
   cardAttachments: [],
   cardActivity: [],
+  openCardId: null,
   loadingBoard: false,
   loadingLists: false,
   loadingComments: false,
@@ -339,6 +392,16 @@ const boardSlice = createSlice({
       if (!state.cards[toListId]) state.cards[toListId] = []
       state.cards[toListId].splice(toIndex, 0, card)
     },
+    moveCardBetweenLists: (state, action) => {
+      const { cardId, fromListId, toListId } = action.payload
+      const fromCards = state.cards[fromListId] || []
+      const cardIndex = fromCards.findIndex((c) => c.id === cardId)
+      if (cardIndex === -1) return
+      const [card] = fromCards.splice(cardIndex, 1)
+      card.list_id = toListId
+      if (!state.cards[toListId]) state.cards[toListId] = []
+      state.cards[toListId].push(card)
+    },
     moveList: (state, action) => {
       const { fromIndex, toIndex } = action.payload
       const [list] = state.lists.splice(fromIndex, 1)
@@ -379,6 +442,18 @@ const boardSlice = createSlice({
       const listId = action.payload
       state.lists = state.lists.filter((l) => l.id !== listId)
       delete state.cards[listId]
+    },
+    setOpenCardId: (state, action) => {
+      state.openCardId = action.payload
+    },
+    injectCardActivity: (state, action) => {
+      const event = action.payload
+      // Only inject if this card's modal is currently open
+      if (state.openCardId !== event.entity_id) return
+      // De-duplicate: discard if we already have this event id
+      if (state.cardActivity.some((a) => a.id === event.id)) return
+      // Prepend — activity list is sorted newest-first
+      state.cardActivity.unshift(event)
     },
   },
   extraReducers: (builder) => {
@@ -583,7 +658,8 @@ const boardSlice = createSlice({
 
 export const {
   setBoards, setCurrentBoard, setLists, setCards, clearBoard,
-  moveCard, moveList, addCard, updateCard, deleteCard,
+  moveCard, moveCardBetweenLists, moveList, addCard, updateCard, deleteCard,
   addList, updateList, deleteList,
+  setOpenCardId, injectCardActivity,
 } = boardSlice.actions
 export default boardSlice.reducer

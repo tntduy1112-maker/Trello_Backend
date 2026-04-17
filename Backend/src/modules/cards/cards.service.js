@@ -2,6 +2,7 @@ const model = require('./cards.model');
 const listModel = require('../lists/lists.model');
 const boardModel = require('../boards/boards.model');
 const { logActivity } = require('../../utils/activityLogger');
+const { sendNotification } = require('../../utils/notificationSender');
 
 const assertBoardAccess = async (userId, boardId) => {
   const board = await boardModel.findBoardById(boardId);
@@ -59,6 +60,17 @@ const updateCard = async (userId, cardId, fields) => {
     await model.removeCardMembers(cardId);
     if (fields.assigneeId) {
       await model.setCardMember(cardId, fields.assigneeId, userId);
+      // Notify the new assignee (skip self-assign)
+      if (fields.assigneeId !== userId) {
+        sendNotification({
+          userId: fields.assigneeId,
+          type: 'card_assigned',
+          title: 'Bạn được giao việc',
+          message: `Bạn đã được assign vào card "${card.title}"`,
+          entityType: 'card',
+          entityId: cardId,
+        });
+      }
     }
   }
 
@@ -66,13 +78,19 @@ const updateCard = async (userId, cardId, fields) => {
   const FIELD_LABEL = {
     title: 'title', description: 'description', priority: 'priority',
     due_date: 'dueDate', is_archived: 'archived', is_completed: 'completed',
-    cover_color: 'coverColor', list_id: 'list',
+    cover_color: 'coverColor',
+    // list_id is handled separately below to store names instead of UUIDs
   };
   const changes = [];
   for (const [dbKey, label] of Object.entries(FIELD_LABEL)) {
     if (dbKey in allowed && String(allowed[dbKey]) !== String(card[dbKey])) {
       changes.push({ field: label, oldValue: card[dbKey], newValue: allowed[dbKey] });
     }
+  }
+  // Log list move with human-readable names
+  if ('list_id' in allowed && String(allowed.list_id) !== String(card.list_id)) {
+    const newList = await listModel.findListById(allowed.list_id);
+    changes.push({ field: 'list', oldValue: list.name, newValue: newList?.name || allowed.list_id });
   }
   if ('assigneeId' in fields) {
     const oldAssignee = Array.isArray(card.assignees) ? (card.assignees[0]?.full_name || null) : null;

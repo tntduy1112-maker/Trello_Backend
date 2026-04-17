@@ -1,6 +1,6 @@
 # TaskFlow — Ứng dụng Quản lý Công việc (Trello-style)
 
-> **Stack:** Node.js + Express | React 18 + Redux Toolkit | PostgreSQL 16 | JWT Authentication | Multi-tenant Workspace
+> **Stack:** Node.js + Express | React 18 + Redux Toolkit | PostgreSQL 16 | JWT Authentication | MinIO (S3) | Redis | Multi-tenant Workspace
 
 ---
 
@@ -12,6 +12,8 @@
 - Frontend: `http://localhost:5173` (Vite dev server)
 - Backend API: `http://localhost:3000/api/v1`
 - Database: PostgreSQL 16 trên Docker port `5432`
+- Object Storage: MinIO trên Docker port `9000` (console `9001`)
+- Cache / Blacklist: Redis trên Docker port `6379`
 
 ---
 
@@ -23,11 +25,13 @@ Users
         └── Boards
               └── Lists (Columns)
                     └── Cards (Tasks)
-                          ├── card_members (1 assignee)
-                          ├── card_labels (many labels)  ✅
-                          ├── Comments          ✅
-                          ├── Checklists        ⏳
-                          └── Attachments       ⏳
+                          ├── card_members (1 assignee)    ✅
+                          ├── card_labels (many labels)    ✅
+                          ├── Comments (1-level threaded)  ✅
+                          ├── Attachments (MinIO)          ✅
+                          ├── Activity Logs               ✅
+                          └── Checklists                  ⏳
+      └── Notifications (SSE real-time)            ✅
 ```
 
 ---
@@ -43,6 +47,10 @@ Users
 - Hỗ trợ đăng nhập đa thiết bị (multi-device session)
 - Đặt lại mật khẩu qua email (link 1 giờ)
 - Xem và cập nhật hồ sơ cá nhân (tên, avatar)
+- **Security hardening:**
+  - Refresh token hash (SHA-256) lưu DB — DB leak không dùng được token gốc
+  - Token rotation mỗi lần dùng — replay attack bất khả thi
+  - Token blacklist bằng Redis (`jti` → auto-expire) — logout revoke ngay lập tức
 
 ---
 
@@ -67,7 +75,10 @@ Users
 - Tạo nhiều board trong một workspace
 - Tùy chỉnh màu nền cho board
 - Kiểm soát quyền truy cập: `private` / `workspace` / `public`
-- Mời thành viên vào board qua email
+- Mời thành viên vào board qua email — **2 luồng tự động:**
+  - User đã có tài khoản → thêm trực tiếp + gửi email thông báo
+  - User mới → gửi email với link token, accept flow xác minh email khớp
+- Xem danh sách pending invitations, thu hồi lời mời
 - Phân quyền 4 cấp trong board:
 
 | Quyền | Owner | Admin | Member | Viewer |
@@ -89,22 +100,18 @@ Users
 
 ---
 
-### 5. Cards (Công việc) ✅ Hoàn thành (core), ⏳ Một số tính năng đang phát triển
+### 5. Cards (Công việc) ✅ Hoàn thành
 
-**Đã hoàn thành:**
 - Tạo card với tiêu đề
 - Kéo thả card giữa các list và sắp xếp thứ tự (UI hoạt động, chưa persist vị trí vào DB)
-- Chỉnh sửa tiêu đề, mô tả, màu bìa inline trong modal
+- Chỉnh sửa tiêu đề, mô tả inline trong modal
 - Đặt ngày đến hạn (due date) — hiển thị màu đỏ nếu quá hạn
 - Gán mức độ ưu tiên: `Low` / `Medium` / `High` / `Critical`
 - Gán **một** thành viên vào card (single assignee — ownership rõ ràng)
+- **Đánh dấu hoàn thành** (`is_completed` toggle) — visual feedback: title gạch ngang, badge "Hoàn thành"
+- Hiển thị ảnh bìa (cover image) từ attachment
 - Nút **"Lưu trữ card"**: validate mô tả không rỗng → lưu tất cả thông tin xuống DB
 - Xoá card
-
-**Chưa implement:**
-- ~~Markdown cho mô tả~~ (plain text hiện tại)
-- ~~Nhắc nhở trước deadline N phút~~
-- ~~Đánh dấu card hoàn thành (checkbox)~~
 
 ---
 
@@ -133,37 +140,50 @@ Users
 - Bình luận trực tiếp trên card — lưu xuống DB, hiển thị real-time từ Redux
 - Reply comment (1 cấp) — indent bên dưới comment gốc, phân cách bằng border-left
 - Chỉnh sửa comment inline — chỉ tác giả mới sửa được, hiển thị nhãn "(đã sửa)"
-- Xóa comment — chỉ tác giả; nếu có replies, replies float up (parent_id → NULL)
+- Xóa comment — chỉ tác giả
 - Backend: 4 endpoints — GET/POST `/cards/:cardId/comments`, PUT/DELETE `/comments/:commentId`
 - 1-level nesting guard: server từ chối reply-to-reply (400 Bad Request)
 - Redux: `cardComments[]` + `loadingComments` trong store, 4 thunks đồng bộ state nested replies
 
 ---
 
-### 9. Attachments (Đính kèm) ⏳ Chưa implement
+### 9. Attachments (Đính kèm) ✅ Hoàn thành
 
-- Upload file đính kèm vào card
-- Đặt ảnh đính kèm làm ảnh bìa của card
-- *(Bảng `attachments` đã có trong DB schema)*
+- Upload file đính kèm vào card (ảnh, PDF, Office docs, ZIP, text — tối đa 10 MB)
+- Lưu trữ trên **MinIO** (S3-compatible object storage tự host)
+- Download file qua File System Access API (native save dialog) với fallback anchor
+- Xoá attachment (owner hoặc board admin/owner); tự động xoá khỏi MinIO
+- Đặt ảnh đính kèm làm **ảnh bìa** của card (chỉ file image)
+- Badge attachment count hiển thị trên card trong board view
+- Backend: 4 endpoints — GET/POST `/cards/:cardId/attachments`, DELETE `…/:id`, PATCH `…/:id/cover`
 
 ---
 
 ### 10. Activity Logs ✅ Hoàn thành
 
 - Tự động ghi lại mọi hành động: ai làm gì, trên đối tượng nào, lúc nào
-- Lưu giá trị cũ/mới dưới dạng JSONB (`metadata.changes[]` — field-level diff)
+- Lưu giá trị metadata dưới dạng JSONB (field-level context)
 - Fire-and-forget: `logActivity()` không bao giờ throw — lỗi log không ảnh hưởng main flow
-- Hooks vào: `cards.service` (created/updated/deleted), `lists.service` (created/deleted), `comments.service` (added)
-- Backend: 2 endpoints — `GET /boards/:boardId/activity`, `GET /cards/:cardId/activity` (có phân trang)
-- Frontend: tab **Hoạt động** trong CardDetailModal bên cạnh tab Bình luận; hiển thị avatar, tên, mô tả tiếng Việt, relative time
+- Hooks vào: `cards.service` (created/updated/deleted), `lists.service` (created/deleted), `comments.service` (added), `attachments.service` (added/deleted/cover)
+- Backend: 2 endpoints — `GET /boards/:boardId/activity`, `GET /cards/:cardId/activity`
+- Frontend: tab **Hoạt động** trong CardDetailModal; hiển thị avatar, tên, mô tả, relative time
 
 ---
 
-### 11. Notifications ⏳ Chưa implement
+### 11. Notifications ✅ Hoàn thành
 
-- Thông báo khi được assign vào card, sắp đến deadline, được mention trong comment
-- Đánh dấu đã đọc từng thông báo hoặc tất cả
-- *(Bảng `notifications` đã có trong DB schema)*
+- Real-time push qua **SSE** (Server-Sent Events) — EventSource tự reconnect, token qua query param
+- **3 loại trigger tự động:**
+  - Card assigned → thông báo ngay tới assignee mới
+  - Comment added → thông báo tới assignee của card (nếu khác commenter)
+  - Due date reminder → cron job chạy mỗi giờ, tìm card sắp hết hạn trong 24h (dedup guard)
+- Đánh dấu đã đọc từng thông báo hoặc tất cả (`read-all`)
+- Xóa thông báo
+- Unread count badge hiển thị trên bell icon ở Navbar
+- `sendNotification()` fire-and-forget — lỗi không bao giờ ảnh hưởng main flow
+- Backend: 5 endpoints — `GET /notifications`, `GET /notifications/unread-count`, `GET /notifications/stream` (SSE), `PUT /:id/read`, `PUT /read-all`, `DELETE /:id`
+- Redux: `notificationSlice` — 5 thunks + `addNotification` action (SSE inject)
+- Hook `useNotificationStream` — mở SSE khi auth, đóng khi logout
 
 ---
 
@@ -175,22 +195,32 @@ Users
 - [x] Quản lý Boards & thành viên (CRUD + visibility + invite)
 - [x] Frontend kết nối API thật (bỏ toàn bộ mock data)
 
-### Phase 2 — Board Features 🔄 Đang thực hiện
+### Phase 2 — Board Features ✅ Hoàn thành
 - [x] Lists CRUD (tạo, đổi tên, xoá)
 - [x] Cards CRUD (tạo, sửa title/description/priority/dueDate/assignee, xoá)
 - [x] Single assignee per card (card_members)
 - [x] Drag & Drop UI (list reorder, card reorder, card move between lists)
-- [ ] **Persist DnD vị trí vào DB** (`PUT /cards/:cardId` với position mới sau khi drop)
+- [ ] **Persist DnD vị trí vào DB** (`PUT /cards/:cardId` + `PUT /lists/:listId` với position mới)
 - [x] Labels & card labels
 
-### Phase 3 — Advanced Card Features 🔄 Đang thực hiện
-- [x] Comments (bao gồm thread reply, edit, delete)
-- [x] Activity logs (hooks vào cards + lists + comments)
+### Phase 3 — Advanced Card Features ✅ Hoàn thành
+- [x] Comments (threaded reply, edit, delete)
+- [x] Activity logs (hooks vào cards, lists, comments, attachments)
+- [x] Attachments & file upload (MinIO)
+- [x] Card completion toggle (`is_completed`)
+- [x] Board invitation (token-based email flow)
+- [x] Security hardening (hashed tokens, Redis blacklist, token rotation)
 - [ ] Checklists & checklist items
-- [ ] Attachments & file upload
 
-### Phase 4 — Monitoring & Notifications ⏳
-- [ ] Notification system
+### Phase 4 — Monitoring & Notifications ✅ Hoàn thành
+- [x] Notification system (SSE real-time) — assign, comment, due date reminder
+- [x] Unread badge + dropdown UI (mark read, mark all, delete)
+- [x] Due date cron job (chạy mỗi giờ, dedup guard 24h)
+
+### Phase 5 — Reactive Activity Stream 🔄 Đang thực hiện
+- [x] **Phase 1 — Foundation:** `broadcastCardActivity()` phát SSE tới tất cả board members; `activityLogger` dùng CTE INSERT để lấy lại row kèm user info trong 1 query rồi broadcast ngay; `injectCardActivity` reducer với de-dup theo `event_id`; `useNotificationStream` định tuyến theo `topic`; `CardDetailModal` đăng ký `openCardId` khi mở/đóng
+- [ ] **Phase 2 — Core UX:** scroll-aware prepend vs. floating pill; highlight fade animation 3s; tab badge khi có activity mới
+- [ ] **Phase 3 — Resilience:** Type B batching server-side; reconnect refetch; "Live updates paused" banner
 
 ---
 
@@ -199,46 +229,70 @@ Users
 ```
 Duy_AI_Plan/
 ├── Backend/
+│   ├── migrations/
+│   │   ├── 001_init.sql               ← Schema gốc (11 bảng)
+│   │   ├── 002_board_invitations.sql  ← board_invitations table
+│   │   ├── 003_hash_refresh_tokens.sql← token_hash column
+│   │   ├── 004_token_blacklist.sql    ← token_blacklist table
+│   │   └── 005_attachments_cover.sql  ← cover_image_url, object_name
 │   └── src/
-│       ├── app.js                 ← Entry point, route mounting
+│       ├── app.js                     ← Entry point, route mounting
 │       ├── configs/
-│       │   ├── postgres.js        ← pg connection pool
+│       │   ├── postgres.js            ← pg connection pool
 │       │   ├── env.js
-│       │   └── swagger.js
+│       │   ├── swagger.js
+│       │   ├── minio.js               ← MinIO client + initBucket
+│       │   └── redis.js               ← ioredis client
 │       ├── modules/
-│       │   ├── auth/              ✅ 8 endpoints
-│       │   ├── organizations/     ✅ 9 endpoints
-│       │   ├── boards/            ✅ 10 endpoints
-│       │   ├── lists/             ✅ 4 endpoints
-│       │   ├── cards/             ✅ 5 endpoints
-│       │   ├── labels/            ✅ 7 endpoints
-│       │   ├── comments/          ✅ 4 endpoints
-│       │   ├── activityLogs/      ✅ 2 endpoints
-│       │   └── notifications/     ⏳ chưa tạo
+│       │   ├── auth/                  ✅ 9 endpoints
+│       │   ├── organizations/         ✅ 9 endpoints
+│       │   ├── boards/                ✅ 10 endpoints
+│       │   ├── lists/                 ✅ 4 endpoints
+│       │   ├── cards/                 ✅ 5 endpoints
+│       │   ├── labels/                ✅ 7 endpoints
+│       │   ├── comments/              ✅ 4 endpoints
+│       │   ├── activityLogs/          ✅ 2 endpoints
+│       │   ├── attachments/           ✅ 4 endpoints
+│       │   ├── invitations/           ✅ 2 endpoints (preview + accept)
+│       │   └── notifications/         ✅ 6 endpoints (list, count, stream SSE, read, read-all, delete)
 │       ├── middlewares/
-│       │   ├── authenticate.js    ← Xác thực JWT
-│       │   └── validate.js        ← Joi schema validation
+│       │   ├── authenticate.js        ← JWT verify + Redis blacklist check
+│       │   └── validate.js            ← Joi schema validation
 │       └── utils/
 │           ├── jwt.js
 │           ├── bcrypt.js
-│           ├── email.js
+│           ├── email.js               ← Nodemailer + invite email templates
 │           ├── response.js
-│           └── activityLogger.js  ← Fire-and-forget activity INSERT
+│           ├── activityLogger.js      ← CTE INSERT → lấy row kèm user info → broadcastCardActivity
+│           ├── storage.js             ← MinIO uploadFile/deleteFile/getPublicUrl
+│           ├── tokenCrypto.js         ← AES-256-GCM encrypt/decrypt
+│           ├── notificationSender.js  ← sendNotification (DB+SSE) + broadcastCardActivity (fan-out board members)
+│           └── sseClients.js          ← In-memory SSE client registry (Map, userId → res)
+│       └── jobs/
+│           └── dueDateReminder.js     ← Cron mỗi giờ, gửi reminder 24h trước deadline
 │
 └── Frontend/
     └── src/
-        ├── api/axiosInstance.js   ← Axios + JWT interceptor + refresh queue
+        ├── api/axiosInstance.js       ← Axios + JWT interceptor + refresh queue
+        ├── hooks/
+        │   └── useNotificationStream.js ← SSE hook; topic routing: card_activity → injectCardActivity
         ├── redux/slices/
-        │   ├── authSlice.js       ✅ fetchMe, setCredentials
-        │   ├── workspaceSlice.js  ✅ CRUD thunks
-        │   ├── boardSlice.js      ✅ fetchBoard, fetchBoardLists, createList/Card, saveCard, deleteCard,
-        │   │                         labels (6 thunks), comments (4 thunks), activity (1 thunk)
-        │   └── notificationSlice.js
-        ├── services/              ← API call functions (1 file per domain)
-        ├── pages/                 ← Auth, Workspace, Board, Profile pages
+        │   ├── authSlice.js           ✅ fetchMe, setCredentials
+        │   ├── workspaceSlice.js      ✅ CRUD thunks
+        │   ├── boardSlice.js          ✅ lists, cards, labels, comments, activity, attachments (30+ thunks)
+        │   │                             + openCardId, setOpenCardId, injectCardActivity
+        │   └── notificationSlice.js   ✅ 5 thunks + addNotification (SSE)
+        ├── services/                  ← API call functions (1 file per domain)
+        ├── pages/
+        │   ├── auth/                  ← Login, Register, VerifyEmail, ResetPassword
+        │   ├── workspace/             ← WorkspaceList, BoardList, Settings, Create
+        │   ├── board/                 ← BoardPage
+        │   ├── profile/               ← ProfilePage
+        │   └── invitations/           ← AcceptInvitePage
         └── components/
-            ├── board/             ← ListColumn, CardItem, CardDetailModal
-            └── ui/                ← Button, Avatar, Modal, Dropdown, …
+            ├── board/                 ← ListColumn, CardItem, CardDetailModal,
+            │                            InviteMemberModal
+            └── ui/                    ← Button, Avatar, Modal, Dropdown, …
 ```
 
 ---
@@ -261,6 +315,9 @@ Duy_AI_Plan/
 | Password Hashing | bcryptjs | 2.4.3 |
 | Validation | Joi | 17.11.0 |
 | Email | Nodemailer | 8.0.5 |
+| File Upload | Multer (memoryStorage) | — |
 | API Docs | Swagger UI Express | 5.0.1 |
 | Database | PostgreSQL | 16 |
+| Object Storage | MinIO (S3-compatible) | — |
+| Cache / Blacklist | Redis (ioredis) | — |
 | Containerization | Docker + Compose | — |

@@ -5,6 +5,7 @@ import {
   Archive, Trash2, Plus, Check,
   Edit3, UserX, Tag, Pencil, Activity,
   Paperclip, FileText, Image, Download, CheckCircle, AlertCircle,
+  LayoutList, ChevronDown,
 } from 'lucide-react'
 import {
   updateCard, saveCardThunk, deleteCardThunk,
@@ -14,6 +15,7 @@ import {
   addCommentThunk, editCommentThunk, deleteCommentThunk,
   fetchCardAttachments, addAttachmentThunk,
   deleteAttachmentThunk, toggleAttachmentCoverThunk,
+  moveCardFromModalThunk, setOpenCardId,
 } from '../../redux/slices/boardSlice'
 import { formatDate, formatRelativeTime, isOverdue } from '../../utils/helpers'
 import { PRIORITY_COLOR } from '../../data/constants'
@@ -39,7 +41,12 @@ const ACTION_LABEL = {
   'card.updated': (m) => {
     const changes = m?.changes || []
     if (changes.length === 0) return 'đã cập nhật card'
-    const FIELD_VI = { title: 'tiêu đề', description: 'mô tả', priority: 'độ ưu tiên', dueDate: 'hạn', archived: 'lưu trữ', completed: 'hoàn thành', coverColor: 'màu bìa', assignee: 'thành viên' }
+    // Detail format for list moves
+    if (changes.length === 1 && changes[0].field === 'list') {
+      const { oldValue, newValue } = changes[0]
+      return `đã chuyển card này từ "${oldValue}" sang "${newValue}"`
+    }
+    const FIELD_VI = { title: 'tiêu đề', description: 'mô tả', priority: 'độ ưu tiên', dueDate: 'hạn', archived: 'lưu trữ', completed: 'hoàn thành', coverColor: 'màu bìa', assignee: 'thành viên', list: 'danh sách' }
     if (changes.length === 1) return `đã cập nhật ${FIELD_VI[changes[0].field] || changes[0].field}`
     return `đã cập nhật ${changes.length} trường`
   },
@@ -57,6 +64,7 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
   const { user: currentUser } = useSelector((state) => state.auth)
   const boardLabels = useSelector((state) => state.board.boardLabels)
   const currentBoard = useSelector((state) => state.board.currentBoard)
+  const lists = useSelector((state) => state.board.lists)
   const cardActivity = useSelector((state) => state.board.cardActivity)
   const loadingActivity = useSelector((state) => state.board.loadingActivity)
   const cardComments = useSelector((state) => state.board.cardComments)
@@ -64,9 +72,12 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
   const cardAttachments = useSelector((state) => state.board.cardAttachments)
   const loadingAttachments = useSelector((state) => state.board.loadingAttachments)
 
+  // Tracks which list this card currently belongs to (can change after an in-modal move)
+  const [currentListId, setCurrentListId] = useState(listId)
+
   // Derive up-to-date labels from the Redux store so they reflect toggle changes instantly
   const cardInStore = useSelector((state) => {
-    const cardList = state.board.cards[listId] || []
+    const cardList = state.board.cards[currentListId] || []
     return cardList.find((c) => c.id === card?.id)
   })
   const cardLabels = (cardInStore || card)?.labels || []
@@ -109,6 +120,11 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
   const [labelError, setLabelError] = useState('')
   const labelPickerRef = useRef(null)
 
+  // List picker (move card)
+  const [showListPicker, setShowListPicker] = useState(false)
+  const [movingList, setMovingList] = useState(null) // id of list being moved to
+  const listPickerRef = useRef(null)
+
   // Attachments
   const fileInputRef = useRef(null)
   const [uploadingFile, setUploadingFile] = useState(false)
@@ -116,12 +132,15 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
   const [downloadingId, setDownloadingId] = useState(null)
   const [toast, setToast] = useState(null) // { message, type: 'success'|'error' }
 
-  // Fetch comments, activity, attachments when modal opens
+  // Register the open card for live activity injection; fetch initial data.
   useEffect(() => {
     if (isOpen && card?.id) {
+      dispatch(setOpenCardId(card.id))
       dispatch(fetchCardComments(card.id))
       dispatch(fetchCardActivity(card.id))
       dispatch(fetchCardAttachments(card.id))
+    } else {
+      dispatch(setOpenCardId(null))
     }
   }, [isOpen, card?.id, dispatch])
 
@@ -134,6 +153,9 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
       if (labelPickerRef.current && !labelPickerRef.current.contains(e.target)) {
         setShowLabelPicker(false)
         setEditingLabel(null)
+      }
+      if (listPickerRef.current && !listPickerRef.current.contains(e.target)) {
+        setShowListPicker(false)
       }
     }
     document.addEventListener('mousedown', handler)
@@ -151,13 +173,13 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
 
   const handleSaveTitle = () => {
     if (title.trim() && title !== card.title) {
-      dispatch(updateCard({ listId, cardId: card.id, updates: { title: title.trim() } }))
+      dispatch(updateCard({ listId: currentListId, cardId: card.id, updates: { title: title.trim() } }))
     }
     setEditingTitle(false)
   }
 
   const handleSaveDesc = () => {
-    dispatch(updateCard({ listId, cardId: card.id, updates: { description } }))
+    dispatch(updateCard({ listId: currentListId, cardId: card.id, updates: { description } }))
     setEditingDesc(false)
   }
 
@@ -165,7 +187,7 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
     const isSame = assignee?.user_id === member.user_id
     const next = isSame ? null : member
     setAssignee(next)
-    dispatch(updateCard({ listId, cardId: card.id, updates: { assignees: next ? [next] : [] } }))
+    dispatch(updateCard({ listId: currentListId, cardId: card.id, updates: { assignees: next ? [next] : [] } }))
     setShowMemberPicker(false)
   }
 
@@ -213,12 +235,12 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
 
   const handleChangePriority = (p) => {
     setPriority(p)
-    dispatch(updateCard({ listId, cardId: card.id, updates: { priority: p } }))
+    dispatch(updateCard({ listId: currentListId, cardId: card.id, updates: { priority: p } }))
   }
 
   const handleChangeDueDate = (d) => {
     setDueDate(d)
-    dispatch(updateCard({ listId, cardId: card.id, updates: { due_date: d } }))
+    dispatch(updateCard({ listId: currentListId, cardId: card.id, updates: { due_date: d } }))
   }
 
   const handleToggleComplete = async () => {
@@ -228,7 +250,7 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
     try {
       await dispatch(saveCardThunk({
         cardId: card.id,
-        listId,
+        listId: currentListId,
         data: { isCompleted: newValue },
       })).unwrap()
     } catch {
@@ -249,7 +271,7 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
     try {
       await dispatch(saveCardThunk({
         cardId: card.id,
-        listId,
+        listId: currentListId,
         data: {
           title: title.trim() || card.title,
           description: description.trim(),
@@ -269,7 +291,7 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
 
   const handleDelete = async () => {
     try {
-      await dispatch(deleteCardThunk({ cardId: card.id, listId })).unwrap()
+      await dispatch(deleteCardThunk({ cardId: card.id, listId: currentListId })).unwrap()
       onClose()
     } catch {
       // silently ignore
@@ -285,9 +307,9 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
     const isOn = cardLabels.some((l) => l.id === label.id)
     try {
       if (isOn) {
-        await dispatch(removeCardLabelThunk({ cardId: card.id, labelId: label.id, listId })).unwrap()
+        await dispatch(removeCardLabelThunk({ cardId: card.id, labelId: label.id, listId: currentListId })).unwrap()
       } else {
-        await dispatch(addCardLabelThunk({ cardId: card.id, labelId: label.id, listId })).unwrap()
+        await dispatch(addCardLabelThunk({ cardId: card.id, labelId: label.id, listId: currentListId })).unwrap()
       }
     } catch (err) {
       setLabelError(typeof err === 'string' ? err : 'Lỗi khi gán nhãn, thử lại.')
@@ -308,7 +330,7 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
       })).unwrap()
       setNewLabelName('')
       // Auto-assign the newly created label to this card immediately
-      await dispatch(addCardLabelThunk({ cardId: card.id, labelId: newLabel.id, listId })).unwrap()
+      await dispatch(addCardLabelThunk({ cardId: card.id, labelId: newLabel.id, listId: currentListId })).unwrap()
     } catch (err) {
       setLabelError(typeof err === 'string' ? err : 'Lỗi khi tạo nhãn.')
     } finally {
@@ -342,7 +364,7 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
       for (const file of files) {
         const formData = new FormData()
         formData.append('file', file)
-        await dispatch(addAttachmentThunk({ cardId: card.id, listId, formData })).unwrap()
+        await dispatch(addAttachmentThunk({ cardId: card.id, listId: currentListId, formData })).unwrap()
       }
     } catch (err) {
       setUploadError(typeof err === 'string' ? err : 'Tải lên thất bại, thử lại.')
@@ -354,7 +376,7 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
 
   const handleDeleteAttachment = async (attachmentId) => {
     try {
-      await dispatch(deleteAttachmentThunk({ cardId: card.id, listId, attachmentId })).unwrap()
+      await dispatch(deleteAttachmentThunk({ cardId: card.id, listId: currentListId, attachmentId })).unwrap()
     } catch {
       // silently ignore
     }
@@ -362,9 +384,32 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
 
   const handleToggleCover = async (attachmentId) => {
     try {
-      await dispatch(toggleAttachmentCoverThunk({ cardId: card.id, listId, attachmentId })).unwrap()
+      await dispatch(toggleAttachmentCoverThunk({ cardId: card.id, listId: currentListId, attachmentId })).unwrap()
     } catch {
       // silently ignore
+    }
+  }
+
+  const handleMoveToList = async (targetList) => {
+    if (targetList.id === currentListId || movingList) return
+    const fromList = lists.find((l) => l.id === currentListId)
+    setMovingList(targetList.id)
+    setShowListPicker(false)
+    try {
+      await dispatch(moveCardFromModalThunk({
+        cardId: card.id,
+        fromListId: currentListId,
+        toListId: targetList.id,
+      })).unwrap()
+      setCurrentListId(targetList.id)
+      setToast({
+        message: `Đã di chuyển từ "${fromList?.name || '...'}" sang "${targetList.name}"`,
+        type: 'success',
+      })
+    } catch {
+      setToast({ message: 'Di chuyển thất bại. Vui lòng thử lại.', type: 'error' })
+    } finally {
+      setMovingList(null)
     }
   }
 
@@ -1140,6 +1185,64 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
                     </button>
                   </div>
                 </div>
+              )}
+            </div>
+
+            {/* List selector — move card to a different list */}
+            <div ref={listPickerRef} className="relative">
+              <p className="text-xs font-semibold text-[#8C9BAB] mb-2 uppercase tracking-wide">Danh sách</p>
+
+              {lists.length <= 1 ? (
+                <div className="px-3 py-1.5 bg-[#2C333A] rounded-lg">
+                  <p className="text-xs text-[#596773]">Không có danh sách khác</p>
+                </div>
+              ) : (
+                <>
+                  <button
+                    onClick={() => setShowListPicker((v) => !v)}
+                    disabled={!!movingList}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 bg-[#2C333A] hover:bg-[#38424B] disabled:opacity-60 text-[#B6C2CF] rounded-lg text-xs transition-colors"
+                  >
+                    {movingList ? (
+                      <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                    ) : (
+                      <LayoutList size={13} className="flex-shrink-0" />
+                    )}
+                    <span className="flex-1 text-left truncate">
+                      {lists.find((l) => l.id === currentListId)?.name || 'Chọn danh sách'}
+                    </span>
+                    <ChevronDown size={12} className="flex-shrink-0" />
+                  </button>
+
+                  {showListPicker && (
+                    <div className="absolute right-0 mt-1 w-56 bg-[#282E33] border border-[#454F59] rounded-xl shadow-xl z-20 overflow-hidden">
+                      <div className="px-3 py-2 border-b border-[#454F59]">
+                        <p className="text-xs font-semibold text-[#8C9BAB]">Di chuyển đến</p>
+                      </div>
+                      <ul className="py-1 max-h-52 overflow-y-auto">
+                        {lists.map((list) => {
+                          const isCurrent = list.id === currentListId
+                          return (
+                            <li key={list.id}>
+                              <button
+                                onClick={() => handleMoveToList(list)}
+                                disabled={isCurrent}
+                                className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-colors ${
+                                  isCurrent
+                                    ? 'text-[#596773] cursor-default'
+                                    : 'hover:bg-[#2C333A] text-[#B6C2CF]'
+                                }`}
+                              >
+                                <span className="flex-1 text-xs truncate">{list.name}</span>
+                                {isCurrent && <Check size={12} className="text-[#0C66E4] flex-shrink-0" />}
+                              </button>
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    </div>
+                  )}
+                </>
               )}
             </div>
 

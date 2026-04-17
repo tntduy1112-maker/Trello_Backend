@@ -2,10 +2,8 @@ import React, { useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useSelector } from 'react-redux'
 import {
-  Layout, Users, Settings, Plus, ChevronDown, ChevronRight,
-  Star, Building2, User
+  Layout, Settings, Plus, ChevronDown, ChevronRight,
 } from 'lucide-react'
-import { mockWorkspaces } from '../../data/mockData'
 import Avatar from '../ui/Avatar'
 import { getInitials, generateAvatarColor } from '../../utils/helpers'
 
@@ -13,7 +11,8 @@ export default function Sidebar() {
   const location = useLocation()
   const navigate = useNavigate()
   const { user } = useSelector((state) => state.auth)
-  const [expandedWorkspace, setExpandedWorkspace] = useState('1')
+  const { workspaces } = useSelector((state) => state.workspace)
+  const [expandedWorkspace, setExpandedWorkspace] = useState(null)
 
   const isActive = (path) => location.pathname === path
   const isStartsWith = (path) => location.pathname.startsWith(path)
@@ -61,7 +60,7 @@ export default function Sidebar() {
         </div>
 
         {/* Workspace list */}
-        {mockWorkspaces.map((ws) => (
+        {workspaces.map((ws) => (
           <div key={ws.id}>
             <button
               onClick={() => setExpandedWorkspace(expandedWorkspace === ws.id ? null : ws.id)}

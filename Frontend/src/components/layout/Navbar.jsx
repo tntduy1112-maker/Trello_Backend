@@ -1,9 +1,11 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useSelector, useDispatch } from 'react-redux'
-import { Bell, Search, ChevronDown, User, LogOut, Settings, Zap } from 'lucide-react'
+import { Bell, Search, ChevronDown, User, LogOut, Zap } from 'lucide-react'
 import { logout } from '../../redux/slices/authSlice'
 import { logout as logoutService } from '../../services/auth.service'
+import { fetchNotificationsThunk } from '../../redux/slices/notificationSlice'
+import useNotificationStream from '../../hooks/useNotificationStream'
 import Avatar from '../ui/Avatar'
 import NotificationDropdown from '../ui/NotificationDropdown'
 import Dropdown from '../ui/Dropdown'
@@ -11,9 +13,19 @@ import Dropdown from '../ui/Dropdown'
 export default function Navbar() {
   const dispatch = useDispatch()
   const navigate = useNavigate()
-  const { user } = useSelector((state) => state.auth)
+  const { user, isAuthenticated } = useSelector((state) => state.auth)
   const { unreadCount } = useSelector((state) => state.notification)
   const [notifOpen, setNotifOpen] = useState(false)
+
+  // Connect SSE stream for real-time push notifications
+  useNotificationStream()
+
+  // Fetch initial notification list once on mount
+  useEffect(() => {
+    if (isAuthenticated) {
+      dispatch(fetchNotificationsThunk())
+    }
+  }, [isAuthenticated, dispatch])
 
   const handleLogout = async () => {
     try { await logoutService() } catch { /* ignore */ }

@@ -14,6 +14,8 @@ const { boardActivityRouter, cardActivityRouter } = require('./modules/activityL
 const { cardCommentsRouter, commentRouter } = require('./modules/comments/comments.route');
 const { cardAttachmentsRouter } = require('./modules/attachments/attachments.route');
 const invitationsRouter = require('./modules/invitations/invitations.route');
+const notificationsRouter = require('./modules/notifications/notifications.route');
+const { startDueDateReminder } = require('./jobs/dueDateReminder');
 const { error } = require('./utils/response');
 
 const app = express();
@@ -57,6 +59,7 @@ app.use('/api/v1/cards/:cardId/comments', cardCommentsRouter);
 app.use('/api/v1/comments/:commentId', commentRouter);
 app.use('/api/v1/cards/:cardId/attachments', cardAttachmentsRouter);
 app.use('/api/v1/invitations', invitationsRouter);
+app.use('/api/v1/notifications', notificationsRouter);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', env: env.NODE_ENV });
@@ -76,6 +79,7 @@ app.use((err, req, res, next) => {
 app.listen(env.PORT, async () => {
   console.log(`TaskFlow API running on port ${env.PORT} [${env.NODE_ENV}]`);
   await initBucket().catch((err) => console.error('[MinIO] Startup init failed:', err.message));
+  startDueDateReminder();
 });
 
 module.exports = app;

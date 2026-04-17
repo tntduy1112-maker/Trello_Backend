@@ -1,15 +1,19 @@
 import React, { useRef, useEffect } from 'react'
 import { useSelector, useDispatch } from 'react-redux'
-import { Bell, UserPlus, MessageSquare, Clock, AtSign, CheckCheck } from 'lucide-react'
-import { markRead, markAllRead } from '../../redux/slices/notificationSlice'
+import { Bell, UserPlus, MessageSquare, Clock, AtSign, CheckCheck, X } from 'lucide-react'
+import {
+  markReadThunk,
+  markAllReadThunk,
+  deleteNotificationThunk,
+} from '../../redux/slices/notificationSlice'
 import { formatRelativeTime } from '../../utils/helpers'
 import { NOTIFICATION_TYPE } from '../../data/constants'
 
 const typeIcon = {
-  [NOTIFICATION_TYPE.CARD_ASSIGNED]: <UserPlus size={16} className="text-blue-400" />,
-  [NOTIFICATION_TYPE.COMMENT_ADDED]: <MessageSquare size={16} className="text-green-400" />,
-  [NOTIFICATION_TYPE.DUE_DATE_REMINDER]: <Clock size={16} className="text-yellow-400" />,
-  [NOTIFICATION_TYPE.MENTIONED]: <AtSign size={16} className="text-purple-400" />,
+  [NOTIFICATION_TYPE.CARD_ASSIGNED]:    <UserPlus    size={16} className="text-blue-400" />,
+  [NOTIFICATION_TYPE.COMMENT_ADDED]:    <MessageSquare size={16} className="text-green-400" />,
+  [NOTIFICATION_TYPE.DUE_DATE_REMINDER]:<Clock       size={16} className="text-yellow-400" />,
+  [NOTIFICATION_TYPE.MENTIONED]:        <AtSign      size={16} className="text-purple-400" />,
 }
 
 export default function NotificationDropdown({ isOpen, onClose }) {
@@ -19,9 +23,7 @@ export default function NotificationDropdown({ isOpen, onClose }) {
 
   useEffect(() => {
     const handleClick = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) {
-        onClose()
-      }
+      if (ref.current && !ref.current.contains(e.target)) onClose()
     }
     if (isOpen) document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
@@ -29,11 +31,21 @@ export default function NotificationDropdown({ isOpen, onClose }) {
 
   if (!isOpen) return null
 
+  const handleMarkRead = (notif) => {
+    if (!notif.is_read) dispatch(markReadThunk(notif.id))
+  }
+
+  const handleDelete = (e, id) => {
+    e.stopPropagation()
+    dispatch(deleteNotificationThunk(id))
+  }
+
   return (
     <div
       ref={ref}
       className="absolute right-0 top-full mt-2 w-96 bg-[#282E33] border border-[#454F59] rounded-xl shadow-2xl z-50"
     >
+      {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-[#454F59]">
         <div className="flex items-center gap-2">
           <Bell size={16} className="text-[#B6C2CF]" />
@@ -46,7 +58,7 @@ export default function NotificationDropdown({ isOpen, onClose }) {
         </div>
         {unreadCount > 0 && (
           <button
-            onClick={() => dispatch(markAllRead())}
+            onClick={() => dispatch(markAllReadThunk())}
             className="flex items-center gap-1 text-xs text-[#0C66E4] hover:text-blue-300 transition-colors"
           >
             <CheckCheck size={14} />
@@ -55,6 +67,7 @@ export default function NotificationDropdown({ isOpen, onClose }) {
         )}
       </div>
 
+      {/* List */}
       <div className="max-h-96 overflow-y-auto divide-y divide-[#38424B]">
         {notifications.length === 0 ? (
           <div className="py-12 text-center text-[#8C9BAB] text-sm">
@@ -62,18 +75,21 @@ export default function NotificationDropdown({ isOpen, onClose }) {
           </div>
         ) : (
           notifications.map((notif) => (
-            <button
+            <div
               key={notif.id}
-              onClick={() => dispatch(markRead(notif.id))}
+              onClick={() => handleMarkRead(notif)}
               className={`
-                w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-[#2C333A] transition-colors
+                group relative flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-[#2C333A] transition-colors
                 ${!notif.is_read ? 'bg-[#0C66E4]/5' : ''}
               `}
             >
+              {/* Icon */}
               <div className="flex-shrink-0 mt-0.5 w-8 h-8 rounded-full bg-[#38424B] flex items-center justify-center">
                 {typeIcon[notif.type] || <Bell size={16} className="text-[#8C9BAB]" />}
               </div>
-              <div className="flex-1 min-w-0">
+
+              {/* Content */}
+              <div className="flex-1 min-w-0 pr-6">
                 <p className={`text-sm font-medium ${!notif.is_read ? 'text-white' : 'text-[#B6C2CF]'}`}>
                   {notif.title}
                 </p>
@@ -84,18 +100,30 @@ export default function NotificationDropdown({ isOpen, onClose }) {
                   {formatRelativeTime(notif.created_at)}
                 </p>
               </div>
+
+              {/* Unread dot */}
               {!notif.is_read && (
                 <div className="flex-shrink-0 mt-2 w-2 h-2 rounded-full bg-[#0C66E4]" />
               )}
-            </button>
+
+              {/* Delete button — visible on hover */}
+              <button
+                onClick={(e) => handleDelete(e, notif.id)}
+                className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-[#454F59] text-[#8C9BAB] hover:text-white transition-all"
+                title="Xóa thông báo"
+              >
+                <X size={12} />
+              </button>
+            </div>
           ))
         )}
       </div>
 
+      {/* Footer */}
       <div className="px-4 py-3 border-t border-[#454F59] text-center">
-        <button className="text-xs text-[#0C66E4] hover:text-blue-300 transition-colors">
-          Xem tất cả thông báo
-        </button>
+        <span className="text-xs text-[#596773]">
+          {notifications.length} thông báo
+        </span>
       </div>
     </div>
   )

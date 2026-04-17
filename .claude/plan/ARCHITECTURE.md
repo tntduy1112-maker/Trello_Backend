@@ -11,11 +11,12 @@
 │                         CLIENT (Browser)                        │
 │                                                                 │
 │   React 18  ·  Redux Toolkit  ·  React Router v7  ·  Tailwind  │
+│   useNotificationStream (EventSource SSE)                      │
 │                       Port: 5173 (dev)                         │
-└─────────────────────────┬───────────────────────────────────────┘
-                          │  HTTP/REST  (Axios + JWT Bearer)
-                          │  Base URL: http://localhost:3000/api/v1
-                          ▼
+└──────────┬──────────────────────────────────┬───────────────────┘
+           │  HTTP/REST  (Axios + JWT Bearer)  │  SSE (EventSource)
+           │  Base URL: /api/v1               │  GET /notifications/stream?token=
+           ▼                                  ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                      BACKEND (Express API)                      │
 │                                                                 │
@@ -24,24 +25,27 @@
 │                                                                 │
 │   ┌──────────┐  ┌──────────────┐  ┌────────┐  ┌────────────┐  │
 │   │   Auth   │  │Organizations │  │ Boards │  │Lists+Cards │  │
-│   │  Module  │  │   Module     │  │ Module │  │  Module    │  │
 │   └──────────┘  └──────────────┘  └────────┘  └────────────┘  │
-│   ┌──────────┐  ┌──────────────┐  ┌──────────────────────────┐ │
-│   │  Labels  │  │   Comments   │  │     Activity Logs        │ │
-│   │  Module  │  │   Module     │  │       Module             │ │
-│   └──────────┘  └──────────────┘  └──────────────────────────┘ │
+│   ┌──────────┐  ┌──────────────┐  ┌────────┐  ┌────────────┐  │
+│   │  Labels  │  │   Comments   │  │Attachm.│  │Invitations │  │
+│   └──────────┘  └──────────────┘  └────────┘  └────────────┘  │
+│   ┌──────────────────────┐  ┌─────────────────────────────────┐ │
+│   │   Activity Logs      │  │  Notifications (SSE stream)     │ │
+│   └──────────────────────┘  └─────────────────────────────────┘ │
 │                                                                 │
-│   Middlewares: authenticate.js · validate.js                   │
-│   Utils: jwt.js · bcrypt.js · email.js · response.js          │
-│          activityLogger.js (fire-and-forget INSERT)            │
-└─────────────────────────┬───────────────────────────────────────┘
-                          │  pg (PostgreSQL driver)
-                          ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      PostgreSQL 16                              │
-│                  (Docker container, port 5432)                  │
-│                      Database: mydb                            │
-└─────────────────────────────────────────────────────────────────┘
+│   Utils: activityLogger (CTE INSERT + broadcastCardActivity)   │
+│          notificationSender (sendNotification + broadcast)     │
+│          sseClients (in-memory Map userId→res)                 │
+│          tokenCrypto (AES-256-GCM) · storage (MinIO)          │
+│   Jobs:  dueDateReminder (cron hourly)                         │
+└──────┬──────────────────────────┬──────────────────────────────┘
+       │  pg driver               │  ioredis / minio SDK
+       ▼                          ▼
+┌──────────────┐   ┌────────────────────┐   ┌──────────────────┐
+│ PostgreSQL 16│   │   Redis            │   │   MinIO          │
+│ Docker :5432 │   │   Docker :6379     │   │   Docker :9000   │
+│ (mydb)       │   │ token blacklist    │   │ object storage   │
+└──────────────┘   └────────────────────┘   └──────────────────┘
 ```
 
 ---
@@ -61,22 +65,35 @@ Duy_AI_Plan/
 │   │   │   ├── authenticate.js # Xác thực JWT
 │   │   │   └── validate.js     # Validation Joi
 │   │   ├── modules/
-│   │   │   ├── auth/           # Đăng ký, đăng nhập, JWT
-│   │   │   ├── organizations/  # Workspace CRUD + members
-│   │   │   ├── boards/         # Board CRUD + members
-│   │   │   ├── lists/          # List CRUD (thuộc board)
-│   │   │   ├── cards/          # Card CRUD + assignee
-│   │   │   ├── labels/         # Label CRUD + card-label assignment  ✅
-│   │   │   ├── comments/       # Comment CRUD (threaded, 1-level)    ✅
-│   │   │   └── activityLogs/   # Activity feed read endpoints        ✅
+│   │   │   ├── auth/           # Đăng ký, đăng nhập, JWT (9 endpoints)
+│   │   │   ├── organizations/  # Workspace CRUD + members (9 endpoints)
+│   │   │   ├── boards/         # Board CRUD + members (10 endpoints)
+│   │   │   ├── lists/          # List CRUD (4 endpoints)
+│   │   │   ├── cards/          # Card CRUD + assignee (5 endpoints)
+│   │   │   ├── labels/         # Label CRUD + card-label (7 endpoints)
+│   │   │   ├── comments/       # Comment CRUD threaded (4 endpoints)
+│   │   │   ├── activityLogs/   # Activity feed read (2 endpoints)
+│   │   │   ├── attachments/    # File upload MinIO (4 endpoints)
+│   │   │   ├── invitations/    # Board invite accept flow (2 endpoints)
+│   │   │   └── notifications/  # SSE stream + CRUD (6 endpoints)
+│   │   ├── jobs/
+│   │   │   └── dueDateReminder.js  # Cron hourly, dedup 24h
 │   │   └── utils/
-│   │       ├── jwt.js          # Generate/verify tokens
-│   │       ├── bcrypt.js       # Hash mật khẩu
-│   │       ├── email.js        # Gửi email (Nodemailer)
-│   │       ├── response.js     # Chuẩn hoá JSON response
-│   │       └── activityLogger.js # Fire-and-forget activity INSERT   ✅
+│   │       ├── jwt.js              # Generate/verify tokens
+│   │       ├── bcrypt.js           # Hash mật khẩu
+│   │       ├── email.js            # Nodemailer + invite templates
+│   │       ├── response.js         # Chuẩn hoá JSON response
+│   │       ├── activityLogger.js   # CTE INSERT → enriched row → broadcastCardActivity
+│   │       ├── notificationSender.js # sendNotification + broadcastCardActivity
+│   │       ├── sseClients.js       # In-memory Map userId→res
+│   │       ├── storage.js          # MinIO upload/delete/getPublicUrl
+│   │       └── tokenCrypto.js      # AES-256-GCM encrypt/decrypt
 │   ├── migrations/
-│   │   └── 001_init.sql        # Schema toàn bộ 15 bảng
+│   │   ├── 001_init.sql            # Schema gốc (11 bảng)
+│   │   ├── 002_board_invitations.sql
+│   │   ├── 003_hash_refresh_tokens.sql
+│   │   ├── 004_token_blacklist.sql
+│   │   └── 005_attachments_cover.sql
 │   ├── scripts/release.sh      # Script release (Docker tag)
 │   ├── Dockerfile
 │   ├── docker-compose.yml      # PostgreSQL service
@@ -96,15 +113,18 @@ Duy_AI_Plan/
 │   │   │   ├── auth/           # Login, Register, VerifyEmail, ForgotPassword, Reset
 │   │   │   ├── workspaces/     # WorkspacesPage, BoardListPage, Settings, CreateWorkspace
 │   │   │   ├── boards/         # BoardPage (Kanban canvas), CreateBoardModal
-│   │   │   └── profile/        # ProfilePage
+│   │   │   ├── profile/        # ProfilePage
+│   │   │   └── invitations/    # AcceptInvitePage
 │   │   ├── redux/
 │   │   │   ├── store.js
-│   │   │   └── slices/         # authSlice, boardSlice, workspaceSlice, notificationSlice
-│   │   ├── services/           # API calls (auth, workspace, board, card, list,
-│   │   │                       #            label, activityLog, notification)
-│   │   ├── hooks/              # useAuth, useBoard, usePermission, useDebounce…
+│   │   │   └── slices/         # authSlice, workspaceSlice, notificationSlice
+│   │   │                       # boardSlice (+ openCardId, injectCardActivity)
+│   │   ├── services/           # auth, workspace, board, card, list,
+│   │   │                       # label, activityLog, notification
+│   │   ├── hooks/
+│   │   │   └── useNotificationStream.js  # SSE topic routing
 │   │   └── data/
-│   │       └── constants.js    # PRIORITY_COLOR, etc.
+│   │       └── constants.js    # PRIORITY_COLOR, NOTIFICATION_TYPE, etc.
 │   ├── vite.config.js          # Port 5173
 │   └── tailwind.config.js
 │
@@ -323,22 +343,25 @@ card_members                            ├── priority (low|medium|high|crit
   └── assigned_by → users               └── is_archived
 ```
 
-### Đã có API đầy đủ (4 bảng)
+### Đã có API đầy đủ (6 bảng)
 
 ```
-labels        → nhãn màu của board                    ✅ 7 endpoints
-card_labels   → gán nhãn vào card                     ✅ (thuộc labels module)
-comments      → bình luận trên card (1-level thread)  ✅ 4 endpoints
-activity_logs → lịch sử hành động (JSONB metadata)    ✅ 2 read endpoints
+labels            → nhãn màu của board                       ✅ 7 endpoints
+card_labels       → gán nhãn vào card                        ✅ (thuộc labels module)
+comments          → bình luận trên card (1-level thread)     ✅ 4 endpoints
+                    createComment + updateComment dùng CTE JOIN để trả về user info
+activity_logs     → lịch sử hành động (JSONB metadata)       ✅ 2 read endpoints
+                    activityLogger dùng CTE INSERT → broadcastCardActivity via SSE
+attachments       → file đính kèm (MinIO)                    ✅ 4 endpoints
+notifications     → thông báo người dùng                     ✅ 6 endpoints + SSE stream
+board_invitations → lời mời vào board qua email              ✅ 5 endpoints
 ```
 
-### Đã thiết kế trong SQL, chưa có API (4 bảng)
+### Đã thiết kế trong SQL, chưa có API (2 bảng)
 
 ```
-checklists      → checklist trong card
-checklist_items → item của checklist
-attachments     → file đính kèm
-notifications   → thông báo người dùng
+checklists      → checklist trong card    ⏳
+checklist_items → item của checklist      ⏳
 ```
 
 ---
@@ -555,8 +578,15 @@ Production:
 | **Phase 2** | Cards CRUD API + Frontend (title, desc, priority, due date, assignee) | ✅ Hoàn thành |
 | **Phase 2** | Drag & Drop (UI only, chưa persist vào DB) | 🔄 Một phần |
 | **Phase 2** | Labels (7 endpoints + full picker UI) | ✅ Hoàn thành |
-| **Phase 3** | Comments (threaded, edit, delete, reply) | ✅ Hoàn thành |
+| **Phase 3** | Comments (threaded, edit, delete, reply) + CTE bug fix | ✅ Hoàn thành |
 | **Phase 3** | Activity Logs (auto-log + board/card feed UI) | ✅ Hoàn thành |
+| **Phase 3** | Attachments & file upload (MinIO, cover image) | ✅ Hoàn thành |
+| **Phase 3** | Card completion toggle (`is_completed`) | ✅ Hoàn thành |
+| **Phase 3** | Board invitation (token-based email flow, 2 luồng) | ✅ Hoàn thành |
+| **Phase 3** | Security hardening (hashed tokens, Redis blacklist, rotation) | ✅ Hoàn thành |
 | **Phase 3** | Checklists | ⏳ Chưa implement |
-| **Phase 3** | Attachments, File upload | ⏳ Chưa implement |
-| **Phase 4** | Notifications system | ⏳ Chưa implement |
+| **Phase 4** | Notifications SSE (assign, comment, due date reminder) | ✅ Hoàn thành |
+| **Phase 4** | Unread badge + dropdown (mark read, mark all, delete) | ✅ Hoàn thành |
+| **Phase 5** | Reactive Activity Stream — Phase 1 Foundation | ✅ Hoàn thành |
+| **Phase 5** | Reactive Activity Stream — Phase 2 UX (scroll pill, highlight, badge) | ⏳ Chưa implement |
+| **Phase 5** | Reactive Activity Stream — Phase 3 Resilience (batching, reconnect) | ⏳ Chưa implement |

@@ -37,8 +37,14 @@ const findById = async (id) => {
 
 const createComment = async (cardId, userId, content, parentId = null) => {
   const result = await query(
-    `INSERT INTO comments (card_id, user_id, content, parent_id)
-     VALUES ($1, $2, $3, $4) RETURNING *`,
+    `WITH inserted AS (
+       INSERT INTO comments (card_id, user_id, content, parent_id)
+       VALUES ($1, $2, $3, $4) RETURNING *
+     )
+     SELECT i.*,
+            json_build_object('id', u.id, 'full_name', u.full_name, 'avatar_url', u.avatar_url) AS "user"
+     FROM inserted i
+     LEFT JOIN users u ON u.id = i.user_id`,
     [cardId, userId, content, parentId]
   );
   return result.rows[0];
@@ -46,8 +52,14 @@ const createComment = async (cardId, userId, content, parentId = null) => {
 
 const updateComment = async (id, content) => {
   const result = await query(
-    `UPDATE comments SET content = $2, is_edited = true, updated_at = NOW()
-     WHERE id = $1 RETURNING *`,
+    `WITH updated AS (
+       UPDATE comments SET content = $2, is_edited = true, updated_at = NOW()
+       WHERE id = $1 RETURNING *
+     )
+     SELECT u.*,
+            json_build_object('id', usr.id, 'full_name', usr.full_name, 'avatar_url', usr.avatar_url) AS "user"
+     FROM updated u
+     LEFT JOIN users usr ON usr.id = u.user_id`,
     [id, content]
   );
   return result.rows[0] || null;
