@@ -376,6 +376,7 @@ Ghi chú:
 ## 8. Quên mật khẩu (Forgot Password)
 
 **Endpoint:** `POST /api/v1/auth/forgot-password`
+**Rate limit:** 5 requests / 15 phút / IP (`express-rate-limit`) — 429 nếu vượt quá
 
 ```
 Client                              Service                          DB / Email
@@ -409,6 +410,7 @@ Client                              Service                          DB / Email
 ## 9. Đặt lại mật khẩu (Reset Password)
 
 **Endpoint:** `POST /api/v1/auth/reset-password`
+**Rate limit:** 5 requests / 15 phút / IP (cùng limiter với forgot-password)
 
 ```
 Client                              Service                              DB
@@ -495,17 +497,20 @@ Khi reset-password:
 
 ## 11. Bảng tóm tắt Endpoint
 
-| Endpoint | Method | Auth | Mô tả |
-|---|---|:---:|---|
-| `/auth/register` | POST | ❌ | Tạo tài khoản, gửi OTP email |
-| `/auth/verify-email` | POST | ❌ | Xác thực email bằng OTP 6 chữ số |
-| `/auth/resend-verification` | POST | ❌ | Gửi lại OTP mới (TTL 15 phút) |
-| `/auth/login` | POST | ❌ | Đăng nhập, nhận accessToken + refreshToken |
-| `/auth/refresh` | POST | ❌ | Lấy accessToken mới từ refreshToken |
-| `/auth/logout` | POST | ❌ | Revoke refreshToken hiện tại |
-| `/auth/me` | GET | ✅ JWT | Thông tin user đang đăng nhập |
-| `/auth/forgot-password` | POST | ❌ | Gửi link reset mật khẩu vào email |
-| `/auth/reset-password` | POST | ❌ | Đổi mật khẩu, revoke tất cả tokens |
+| Endpoint | Method | Auth | Rate Limit | Mô tả |
+|---|---|:---:|:---:|---|
+| `/auth/register` | POST | ❌ | — | Tạo tài khoản, gửi OTP email |
+| `/auth/verify-email` | POST | ❌ | — | Xác thực email bằng OTP 6 chữ số |
+| `/auth/resend-verification` | POST | ❌ | — | Gửi lại OTP mới (TTL 15 phút) |
+| `/auth/login` | POST | ❌ | — | Đăng nhập, nhận accessToken + refreshToken cookie |
+| `/auth/refresh` | POST | ❌ | — | Lấy accessToken mới từ refreshToken cookie |
+| `/auth/logout` | POST | ❌* | — | Revoke RT + blacklist AT (best-effort, không fail) |
+| `/auth/me` | GET | ✅ JWT | — | Thông tin user đang đăng nhập |
+| `/auth/me` | PUT | ✅ JWT | — | Cập nhật tên + avatar (multipart, 2MB, MinIO) |
+| `/auth/forgot-password` | POST | ❌ | 5/15m/IP | Gửi link reset mật khẩu vào email |
+| `/auth/reset-password` | POST | ❌ | 5/15m/IP | Đổi mật khẩu, revoke tất cả tokens |
+
+> `*` `/auth/logout` không require JWT nhưng đọc AT từ Authorization header (best-effort) để blacklist jti.
 
 ---
 
@@ -533,7 +538,7 @@ Khi reset-password:
 - **Tự dọn dẹp**: TTL auto-expire, không cần `DELETE WHERE expires_at < NOW()` định kỳ
 - **Scale**: 15 phút TTL × traffic cao = triệu rows trong Postgres; Redis xử lý nhẹ nhàng
 
-**Cấu hình Redis** (`docker-compose.yml` / `configs/redis.js`):
+**Cấu hình Redis** (`configs/redis.js`, `docker-compose.yml`):
 - Image: `redis:7-alpine`, port `6379`, password required
 - `maxmemory 128mb`, policy `allkeys-lru` (xóa key ít dùng nhất khi hết RAM)
 - Persistent: `redis_data` volume, `appendonly yes`
@@ -569,4 +574,72 @@ Lưu ý lưu trữ:
                     KHÔNG readable by JS (chống XSS)
                     KHÔNG phải raw JWT (chống browser malware/cookie theft)
   KHÔNG còn refreshToken trong localStorage
+```
+
+---
+
+## 14. Cập nhật hồ sơ cá nhân (Profile Update)
+
+**Endpoint:** `PUT /api/v1/auth/me`  **Status: ✅ Hoàn thành**
+
+```
+Client                   Multer          auth.service            MinIO / DB
+  │                        │                  │                      │
+  │── PUT /auth/me ────────▶│                  │                      │
+  │   Authorization: Bearer │                  │                      │
+  │   Content-Type: multi   │                  │                      │
+  │   part/form-data        │                  │                      │
+  │   ├── full_name (text)  │                  │                      │
+  │   └── avatar  (file?)   │                  │                      │
+  │                         │                  │                      │
+  │                   avatarUpload.single('avatar')                   │
+  │                   fileFilter: image/* only                        │
+  │                   limits.fileSize: 2MB                            │
+  │                   storage: memoryStorage()                        │
+  │                         │                  │                      │
+  │                         │── req.file ──────▶│                      │
+  │                         │   req.body ───────▶│                      │
+  │                                             │                      │
+  │                                    findUserById(userId)            │
+  │                                             │──────────────────────▶│ DB
+  │                                             │◀───── user            │
+  │                                             │                      │
+  │                                    [nếu có req.file]              │
+  │                                    uploadFile({                   │
+  │                                      buffer, mimetype,            │
+  │                                      folder: 'avatars',           │
+  │                                      filename: originalname        │
+  │                                    })                             │
+  │                                             │──────────────────────▶│ MinIO PUT
+  │                                             │◀─── objectName        │
+  │                                             │                      │
+  │                                    [nếu user.avatar_url tồn tại]  │
+  │                                    deleteFile(oldObjectName)      │
+  │                                    [fire-and-forget, catch noop]  │
+  │                                             │──────────────────────▶│ MinIO DELETE
+  │                                             │                      │
+  │                                    fields.avatar_url =            │
+  │                                      getPublicUrl(objectName)     │
+  │                                             │                      │
+  │                                    updateUser(userId, fields)     │
+  │                                             │──────────────────────▶│ DB
+  │                                             │◀─── updatedUser       │
+  │                                             │                      │
+  │◀──── 200 { user: updatedUser } ─────────────│                      │
+
+Lỗi có thể xảy ra:
+  400 → Multer fileFilter: file không phải image/*
+  413 → Multer limits: file > 2MB
+  404 → User không tồn tại
+
+Frontend (ProfilePage.jsx):
+  handleAvatarChange → lưu file vào avatarFileRef.current
+  handleSaveProfile:
+    const formData = new FormData()
+    formData.append('full_name', profileForm.full_name)
+    if (avatarFileRef.current) formData.append('avatar', avatarFileRef.current)
+    dispatch(updateProfileThunk(formData))
+      → updateMe(formData) — axios PUT với Content-Type: multipart/form-data
+      → fulfilled: state.user merge, localStorage.setItem('user', ...)
+      → rejected: profileError state hiển thị lỗi
 ```

@@ -76,7 +76,7 @@ export default function WorkspacesPage() {
             <h2 className="text-base font-semibold text-white">Workspaces của bạn</h2>
             <button
               onClick={() => navigate('/workspaces/new')}
-              className="flex items-center gap-2 px-3 py-1.5 bg-[#0C66E4] hover:bg-[#0055CC] text-white rounded-lg text-sm transition-colors"
+              className="flex items-center gap-2 px-3 py-1.5 bg-[#0C66E4] hover:bg-[#0055CC] text-white rounded-full text-sm transition-colors"
             >
               <Plus size={14} />
               Tạo workspace mới

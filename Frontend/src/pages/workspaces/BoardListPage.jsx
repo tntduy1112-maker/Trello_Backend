@@ -140,7 +140,7 @@ export default function BoardListPage() {
               <h2 className="text-sm font-semibold text-[#B6C2CF]">Tất cả boards</h2>
               <button
                 onClick={() => setCreateModalOpen(true)}
-                className="flex items-center gap-2 px-3 py-1.5 bg-[#0C66E4] hover:bg-[#0055CC] text-white rounded-lg text-sm transition-colors"
+                className="flex items-center gap-2 px-3 py-1.5 bg-[#0C66E4] hover:bg-[#0055CC] text-white rounded-full text-sm transition-colors"
               >
                 <Plus size={14} />
                 Tạo board mới

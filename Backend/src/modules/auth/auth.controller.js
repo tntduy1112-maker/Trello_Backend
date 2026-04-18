@@ -104,6 +104,17 @@ const getMe = async (req, res, next) => {
   }
 };
 
+const updateMe = async (req, res, next) => {
+  try {
+    const { full_name } = req.body;
+    const avatarFile = req.file || null;
+    const user = await authService.updateProfile(req.user.userId, { full_name, avatarFile });
+    return success(res, { user }, 'Profile updated');
+  } catch (err) {
+    next(err);
+  }
+};
+
 const forgotPassword = async (req, res, next) => {
   try {
     const { email } = req.body;
@@ -135,6 +146,7 @@ module.exports = {
   refreshToken,
   logout,
   getMe,
+  updateMe,
   forgotPassword,
   resetPassword,
 };

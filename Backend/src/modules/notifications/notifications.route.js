@@ -3,7 +3,7 @@ const controller = require('./notifications.controller');
 const authenticate = require('../../middlewares/authenticate');
 const { verifyAccessToken } = require('../../utils/jwt');
 const { isBlacklisted, findUserById } = require('../auth/auth.model');
-const { clients } = require('../../utils/sseClients');
+const { clients, removeClient } = require('../../utils/sseClients');
 const { error } = require('../../utils/response');
 
 const router = express.Router();
@@ -48,7 +48,7 @@ router.get('/stream', async (req, res) => {
 
   req.on('close', () => {
     clearInterval(ping);
-    clients.delete(userId);
+    removeClient(userId);
   });
 });
 

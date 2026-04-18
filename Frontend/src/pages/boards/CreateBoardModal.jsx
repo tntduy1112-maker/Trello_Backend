@@ -126,14 +126,14 @@ export default function CreateBoardModal({ isOpen, onClose, workspaceId, onCreat
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 py-2.5 bg-[#2C333A] hover:bg-[#38424B] text-[#B6C2CF] rounded-lg font-medium text-sm transition-colors"
+              className="flex-1 py-2.5 bg-[#2C333A] hover:bg-[#38424B] text-[#B6C2CF] rounded-full font-medium text-sm transition-colors"
             >
               Hủy
             </button>
             <button
               type="submit"
               disabled={loading}
-              className="flex-1 py-2.5 bg-[#0C66E4] hover:bg-[#0055CC] disabled:opacity-50 text-white rounded-lg font-medium text-sm transition-colors flex items-center justify-center gap-2"
+              className="flex-1 py-2.5 bg-[#0C66E4] hover:bg-[#0055CC] disabled:opacity-50 text-white rounded-full font-medium text-sm transition-colors flex items-center justify-center gap-2"
             >
               {loading ? (
                 <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />

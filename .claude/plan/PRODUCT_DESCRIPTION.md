@@ -35,21 +35,21 @@ These are the core bets behind the product decisions.
 ### H1 — Kanban reduces cognitive load
 **Hypothesis:** Visualizing work as cards in columns (To Do / In Progress / Done) is more intuitive than a flat task list, reducing the time users spend deciding what to work on next.
 
-**Current state:** Board canvas with DnD lists and cards is working end-to-end. Cards persist to DB.
+**Status:** ✅ Implemented.
 
 ---
 
 ### H2 — Multi-workspace isolation increases adoption within organizations
 **Hypothesis:** Teams adopt the tool more broadly when each team or project can have its own workspace with independent membership — they do not want a monolithic single workspace shared by everyone.
 
-**Current state:** Workspace (Organization) CRUD fully implemented. Members can be invited by email and given roles.
+**Status:** ✅ Implemented.
 
 ---
 
 ### H3 — Card-level details (checklist, due date, priority, assignee) reduce follow-up messages
 **Hypothesis:** When all task context lives on the card itself, team members send fewer "what's the status?" messages because the card surface answers those questions directly.
 
-**Current state:** Title, description, priority, due date, single assignee, labels, and comments are implemented and persist to DB. Checklists are not yet implemented.
+**Status:** ✅ Implemented — including checklists with per-item assignee, due date, and progress tracking.
 
 **Design decision — single assignee:** Each card has exactly **one assignee** at a time (not multi-assign). This makes ownership unambiguous — someone is responsible or no one is. Multi-assign was considered but rejected as it dilutes accountability ("everyone's responsible = no one is").
 
@@ -60,7 +60,7 @@ These are the core bets behind the product decisions.
 
 **Technical implication:** Card A at position 1.0, Card B at position 2.0 → inserting between them sets position 1.5. Only one write. No batch update.
 
-**Current state:** Position is stored as FLOAT in both `lists` and `cards` tables. DnD reordering works in the UI (via @dnd-kit) but the new position is **not yet persisted to DB** — page refresh resets order. Persisting DnD is the next step.
+**Status:** ✅ Implemented — positions persisted to DB on drag end with snapshot-based rollback if API fails.
 
 ---
 
@@ -100,11 +100,11 @@ Board role (owner / admin / member / viewer)
 Each card has an implicit state defined by which list it lives in. The lists themselves define the workflow stages — TaskFlow imposes no hardcoded stages. Teams define their own (e.g., `Backlog → In Design → In Dev → QA → Done`).
 
 ```
-Card state    = list it belongs to       ✅ implemented
-Card progress = is_completed flag         ✅ field exists, UI checkbox pending
-              + checklist completion %    ⏳ not yet implemented
-Card urgency  = priority (low/med/high/critical) + due_date proximity  ✅ implemented
-Card owner    = single assignee (card_members, max 1)                  ✅ implemented
+Card state    = list it belongs to                                      ✅ implemented
+Card progress = is_completed flag (toggle, title strikethrough)         ✅ implemented
+              + checklist completion % (progress bar, board view badge) ✅ implemented
+Card urgency  = priority (low/med/high/critical) + due_date proximity   ✅ implemented
+Card owner    = single assignee (card_members, max 1)                   ✅ implemented
 ```
 
 **Logic for "overdue":** A card is overdue when `due_date < NOW()` AND `is_completed = false`. Computed at display time on the frontend (`isOverdue()` helper) — not stored — to avoid stale data.
@@ -123,7 +123,7 @@ This is stored as a FLOAT. After many reorders the gap between positions can bec
 
 **Why FLOAT over integer:** With integer positions, inserting between positions 3 and 4 requires shifting all items ≥ 4 up by 1. With FLOAT, one write is enough.
 
-**Current state (partial):** DnD works visually using @dnd-kit (card reorder within list, card move between lists, list reorder). Redux state updates optimistically. However, the new position is **not yet written back to the DB** — reloading the page will reset the order to the original DB order. Next step: call `PUT /cards/:cardId` and `PUT /lists/:listId` with the computed new position on `onDragEnd`.
+**Status:** ✅ Implemented — `PUT /cards/:cardId` and `PUT /lists/:listId` called on `onDragEnd` with computed FLOAT position.
 
 ---
 
@@ -190,7 +190,7 @@ When a card's activity changes (any mutation by any board member), the Card Deta
 
 **Scope guard:** `openCardId` in Redux state tracks which card modal is open. `injectCardActivity` silently no-ops if `event.entity_id !== openCardId`.
 
-**Current state:** ✅ Phase 1 (Foundation) complete. ⏳ Phase 2 (scroll-aware UX, highlight animation, tab badge) and Phase 3 (Type B batching, reconnect recovery) pending.
+**Status:** ✅ All 3 phases implemented — scroll-aware pill, 3s highlight fade, tab badge (Phase 2); Type B batching, reconnect recovery, "Kết nối gián đoạn" banner (Phase 3).
 
 ---
 
@@ -218,14 +218,14 @@ Logout (all devices) → revoke all Refresh Tokens for that user_id
 2. Owner creates a workspace → invites teammates via email → they join
 3. Owner creates a board → invites board members → creates lists → creates first cards
 
-### Flow 2 — Daily work cycle ✅ Core working, checklist pending
+### Flow 2 — Daily work cycle ✅ Fully working
 1. Contributor opens board → sees all cards per list
 2. Clicks a card → opens detail modal → reads description
 3. Updates priority, due date, assignee in the sidebar
 4. Fills in description → clicks "Lưu trữ card" → saved to DB
 5. Comments on card, replies to teammates, edits/deletes own comments ✅
-6. ~~Ticks off checklist items~~ (not yet implemented)
-7. ~~Moves card to Done via drag-and-drop~~ (DnD works visually, not persisted yet)
+6. Ticks off checklist items (with per-item assignee + due date) ✅
+7. Moves card to Done via drag-and-drop (position persisted to DB, snapshot rollback on error) ✅
 
 ### Flow 3 — Reviewing progress (Team Lead) ✅ Core working
 1. Opens board → scans lists ✅
@@ -272,27 +272,3 @@ Logout (all devices) → revoke all Refresh Tokens for that user_id
 | Card assignee | Single assignee only | Multi-assign | Unambiguous ownership — one person is responsible |
 | Card save trigger | Explicit "Lưu trữ card" button | Auto-save on every field change | Prevent accidental partial saves; description required before commit |
 
----
-
-## 9. Implementation Status
-
-| Feature | Backend | Frontend |
-|---|:---:|:---:|
-| Auth (register, login, OTP, reset) | ✅ | ✅ |
-| Workspace CRUD + member management | ✅ | ✅ |
-| Board CRUD + member management | ✅ | ✅ |
-| Board invitation (token-based, 2 flows) | ✅ | ✅ |
-| Lists CRUD | ✅ | ✅ |
-| Cards CRUD (title, desc, priority, due date, assignee) | ✅ | ✅ |
-| Card completion toggle (`is_completed`) | ✅ | ✅ |
-| Drag & Drop (UI visual reorder) | — | ✅ |
-| Drag & Drop (persist position to DB) | ✅ ready | ⏳ not wired |
-| Labels | ✅ | ✅ |
-| Comments (threaded, edit, delete, reply) | ✅ | ✅ |
-| Activity Logs (card + board feed) | ✅ | ✅ |
-| Attachments (MinIO, cover image) | ✅ | ✅ |
-| Security hardening (hashed tokens, Redis blacklist, rotation) | ✅ | ✅ |
-| Notifications SSE (assign, comment, due date) | ✅ | ✅ |
-| Reactive Activity Stream — Phase 1 | ✅ | ✅ |
-| Reactive Activity Stream — Phase 2 UX | ⏳ | ⏳ |
-| Checklists | ⏳ | ⏳ |

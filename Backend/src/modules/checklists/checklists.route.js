@@ -18,6 +18,8 @@ const addItemSchema = Joi.object({
 const updateItemSchema = Joi.object({
   content:      Joi.string().min(1).max(500).optional(),
   is_completed: Joi.boolean().optional(),
+  assigned_to:  Joi.string().uuid().allow(null).optional(),
+  due_date:     Joi.string().isoDate().allow(null).optional(),
 }).min(1);
 
 // Mounted at /cards/:cardId/checklists

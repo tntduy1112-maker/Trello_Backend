@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useSelector, useDispatch } from 'react-redux'
-import { Bell, Search, ChevronDown, User, LogOut, Zap } from 'lucide-react'
+import { Bell, Search, ChevronDown, User, LogOut, Zap, HelpCircle } from 'lucide-react'
 import { logout } from '../../redux/slices/authSlice'
 import { logout as logoutService } from '../../services/auth.service'
 import { fetchNotificationsThunk } from '../../redux/slices/notificationSlice'
 import useNotificationStream from '../../hooks/useNotificationStream'
 import Avatar from '../ui/Avatar'
 import NotificationDropdown from '../ui/NotificationDropdown'
+import HelpDrawer from '../ui/HelpDrawer'
 import Dropdown from '../ui/Dropdown'
 
 export default function Navbar() {
@@ -16,6 +17,7 @@ export default function Navbar() {
   const { user, isAuthenticated } = useSelector((state) => state.auth)
   const { unreadCount } = useSelector((state) => state.notification)
   const [notifOpen, setNotifOpen] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
 
   // Connect SSE stream for real-time push notifications
   useNotificationStream()
@@ -49,6 +51,7 @@ export default function Navbar() {
   ]
 
   return (
+    <>
     <header className="h-12 bg-[#1D2125] border-b border-[#2C333A] flex items-center px-4 gap-4 z-40 fixed top-0 left-0 right-0">
       {/* Logo */}
       <Link to="/home" className="flex items-center gap-2 flex-shrink-0">
@@ -72,6 +75,15 @@ export default function Navbar() {
 
       {/* Right section */}
       <div className="flex items-center gap-2 ml-auto">
+        {/* Help */}
+        <button
+          onClick={() => setHelpOpen(true)}
+          title="Hướng dẫn sử dụng"
+          className="w-8 h-8 rounded flex items-center justify-center text-[#B6C2CF] hover:bg-[#2C333A] hover:text-white transition-colors"
+        >
+          <HelpCircle size={18} />
+        </button>
+
         {/* Notification Bell */}
         <div className="relative">
           <button
@@ -101,5 +113,8 @@ export default function Navbar() {
         />
       </div>
     </header>
+
+    <HelpDrawer isOpen={helpOpen} onClose={() => setHelpOpen(false)} />
+    </>
   )
 }

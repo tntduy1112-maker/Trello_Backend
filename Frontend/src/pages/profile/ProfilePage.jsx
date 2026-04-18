@@ -1,7 +1,7 @@
-import React, { useState } from 'react'
+import React, { useState, useRef } from 'react'
 import { useSelector, useDispatch } from 'react-redux'
-import { Camera, Save, Lock, Eye, EyeOff, CheckCircle } from 'lucide-react'
-import { updateUser, logout } from '../../redux/slices/authSlice'
+import { Camera, Save, Lock, Eye, EyeOff, CheckCircle, AlertCircle } from 'lucide-react'
+import { logout, updateProfileThunk } from '../../redux/slices/authSlice'
 import { logout as logoutService } from '../../services/auth.service'
 import AppLayout from '../../components/layout/AppLayout'
 import Avatar from '../../components/ui/Avatar'
@@ -27,11 +27,14 @@ export default function ProfilePage() {
   const [passwordErrors, setPasswordErrors] = useState({})
   const [savingProfile, setSavingProfile] = useState(false)
   const [profileSaved, setProfileSaved] = useState(false)
+  const [profileError, setProfileError] = useState('')
   const [avatarPreview, setAvatarPreview] = useState(null)
+  const avatarFileRef = useRef(null)
 
   const handleAvatarChange = (e) => {
     const file = e.target.files[0]
     if (file) {
+      avatarFileRef.current = file
       const url = URL.createObjectURL(file)
       setAvatarPreview(url)
     }
@@ -48,11 +51,22 @@ export default function ProfilePage() {
     const errs = validateProfile()
     if (Object.keys(errs).length > 0) { setProfileErrors(errs); return }
     setSavingProfile(true)
-    // Update locally — backend does not expose a profile update endpoint yet
-    dispatch(updateUser({ full_name: profileForm.full_name }))
-    setSavingProfile(false)
-    setProfileSaved(true)
-    setTimeout(() => setProfileSaved(false), 2500)
+    setProfileError('')
+    try {
+      const formData = new FormData()
+      formData.append('full_name', profileForm.full_name)
+      if (avatarFileRef.current) formData.append('avatar', avatarFileRef.current)
+      const result = await dispatch(updateProfileThunk(formData))
+      if (updateProfileThunk.rejected.match(result)) {
+        setProfileError(result.payload || 'Lưu thất bại')
+      } else {
+        avatarFileRef.current = null
+        setProfileSaved(true)
+        setTimeout(() => setProfileSaved(false), 2500)
+      }
+    } finally {
+      setSavingProfile(false)
+    }
   }
 
   const handleLogout = async () => {
@@ -120,7 +134,7 @@ export default function ProfilePage() {
               )}
               <button
                 onClick={handleLogout}
-                className="mt-4 w-full py-2 bg-red-900/30 hover:bg-red-900/50 text-red-400 border border-red-900/50 rounded-lg text-sm font-medium transition-colors"
+                className="mt-4 w-full py-2 bg-red-900/30 hover:bg-red-900/50 text-red-400 border border-red-900/50 rounded-full text-sm font-medium transition-colors"
               >
                 Đăng xuất
               </button>
@@ -157,7 +171,7 @@ export default function ProfilePage() {
                   <button
                     type="submit"
                     disabled={savingProfile}
-                    className="flex items-center gap-2 px-4 py-2 bg-[#0C66E4] hover:bg-[#0055CC] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
+                    className="flex items-center gap-2 px-4 py-2 bg-[#0C66E4] hover:bg-[#0055CC] disabled:opacity-50 text-white rounded-full text-sm font-medium transition-colors"
                   >
                     {savingProfile ? (
                       <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -168,6 +182,12 @@ export default function ProfilePage() {
                     <div className="flex items-center gap-1.5 text-green-400 text-sm">
                       <CheckCircle size={15} />
                       Đã lưu!
+                    </div>
+                  )}
+                  {profileError && (
+                    <div className="flex items-center gap-1.5 text-red-400 text-sm">
+                      <AlertCircle size={15} />
+                      {profileError}
                     </div>
                   )}
                 </div>
@@ -213,7 +233,7 @@ export default function ProfilePage() {
                 ))}
                 <button
                   type="submit"
-                  className="flex items-center gap-2 px-4 py-2 bg-[#0C66E4] hover:bg-[#0055CC] text-white rounded-lg text-sm font-medium transition-colors"
+                  className="flex items-center gap-2 px-4 py-2 bg-[#0C66E4] hover:bg-[#0055CC] text-white rounded-full text-sm font-medium transition-colors"
                 >
                   <Lock size={14} />
                   Đổi mật khẩu

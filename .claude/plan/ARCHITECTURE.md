@@ -65,7 +65,7 @@ Duy_AI_Plan/
 │   │   │   ├── authenticate.js # Xác thực JWT
 │   │   │   └── validate.js     # Validation Joi
 │   │   ├── modules/
-│   │   │   ├── auth/           # Đăng ký, đăng nhập, JWT (9 endpoints)
+│   │   │   ├── auth/           # Đăng ký, đăng nhập, JWT, profile update (10 endpoints)
 │   │   │   ├── organizations/  # Workspace CRUD + members (9 endpoints)
 │   │   │   ├── boards/         # Board CRUD + members (10 endpoints)
 │   │   │   ├── lists/          # List CRUD (4 endpoints)
@@ -74,6 +74,7 @@ Duy_AI_Plan/
 │   │   │   ├── comments/       # Comment CRUD threaded (4 endpoints)
 │   │   │   ├── activityLogs/   # Activity feed read (2 endpoints)
 │   │   │   ├── attachments/    # File upload MinIO (4 endpoints)
+│   │   │   ├── checklists/     # Checklist + items CRUD (7 endpoints)
 │   │   │   ├── invitations/    # Board invite accept flow (2 endpoints)
 │   │   │   └── notifications/  # SSE stream + CRUD (6 endpoints)
 │   │   ├── jobs/
@@ -108,7 +109,7 @@ Duy_AI_Plan/
 │   │   ├── components/
 │   │   │   ├── layout/         # AppLayout, AuthLayout, Navbar, Sidebar
 │   │   │   ├── board/          # CardItem, ListColumn, CardDetailModal, InviteMemberModal
-│   │   │   └── ui/             # Button, Modal, Avatar, Badge, Input…
+│   │   │   └── ui/             # Button, Modal, Avatar, Badge, Input, HelpDrawer…
 │   │   ├── pages/
 │   │   │   ├── auth/           # Login, Register, VerifyEmail, ForgotPassword, Reset
 │   │   │   ├── workspaces/     # WorkspacesPage, BoardListPage, Settings, CreateWorkspace
@@ -189,6 +190,7 @@ POST /login             → Trả access token (15m) + refresh token (7d)
 POST /refresh           → Cấp access token mới từ refresh token
 POST /logout            → Thu hồi refresh token
 GET  /me                → Thông tin user hiện tại  [auth required]
+PUT  /me                → Cập nhật tên + avatar upload MinIO [auth required]
 POST /forgot-password   → Gửi link reset về email
 POST /reset-password    → Đổi mật khẩu, revoke toàn bộ tokens
 ```
@@ -355,13 +357,15 @@ activity_logs     → lịch sử hành động (JSONB metadata)       ✅ 2 rea
 attachments       → file đính kèm (MinIO)                    ✅ 4 endpoints
 notifications     → thông báo người dùng                     ✅ 6 endpoints + SSE stream
 board_invitations → lời mời vào board qua email              ✅ 5 endpoints
+checklists        → checklist trong card                     ✅ 7 endpoints
+checklist_items   → item (assignee, due_date, progress)      ✅ (thuộc checklists module)
 ```
 
-### Đã thiết kế trong SQL, chưa có API (2 bảng)
+### Checklists — đầy đủ API + UI ✅
 
 ```
-checklists      → checklist trong card    ⏳
-checklist_items → item của checklist      ⏳
+checklists      → checklist trong card                          ✅ 3 endpoints (GET/POST/PUT/DELETE)
+checklist_items → item (assignee, due_date, progress)           ✅ 4 endpoints (POST/PUT/DELETE)
 ```
 
 ---
@@ -410,12 +414,18 @@ Redux Store
 │   ├── boardLabels []       ← labels của board hiện tại
 │   ├── cardComments []      ← comments của card đang mở (nested replies)
 │   ├── cardActivity []      ← activity log của card đang mở
-│   ├── loadingBoard
-│   ├── loadingLists
-│   ├── loadingComments
-│   └── loadingActivity
+│   ├── cardAttachments []   ← attachments của card đang mở
+│   ├── cardChecklists []    ← checklists + items của card đang mở
+│   ├── openCardId           ← ID card đang mở (để SSE inject activity)
+│   ├── dndError             ← lỗi DnD persist (snapshot rollback)
+│   ├── streamPaused         ← SSE reconnect state
+│   ├── loadingBoard / loadingLists / loadingComments
+│   ├── loadingActivity / loadingAttachments / loadingChecklists
+│   └── 44+ thunks (fetch, create, update, delete, DnD persist, move)
 └── notificationSlice
-    └── notifications []
+    ├── notifications []
+    ├── unreadCount
+    └── 5 thunks + addNotification (SSE inject)
 ```
 
 ### API Layer
@@ -437,7 +447,7 @@ services/
   ├── card.service.js          → /lists/:id/cards, /cards/:id, /cards/:id/comments
   ├── label.service.js         → /boards/:id/labels, /labels/:id, /cards/:id/labels  ✅
   ├── activityLog.service.js   → /boards/:id/activity, /cards/:id/activity           ✅
-  └── notification.service.js  → (placeholder, Phase 4)
+  └── notification.service.js  → /notifications/* (list, unread-count, stream, read) ✅
 ```
 
 ### BoardPage — Luồng tải dữ liệu
@@ -554,6 +564,7 @@ Production:
 | UI Styling | Tailwind CSS | 3.4.17 |
 | Build Tool | Vite | 6.0.5 |
 | Icons | Lucide React | 0.469.0 |
+| Markdown Renderer | react-markdown | 9.x |
 | Backend Framework | Express.js | 4.18.2 |
 | Database Driver | pg (node-postgres) | 8.11.3 |
 | Authentication | jsonwebtoken | 9.0.2 |
@@ -576,7 +587,7 @@ Production:
 | **Phase 1** | Frontend kết nối API thật (bỏ mock data hoàn toàn) | ✅ Hoàn thành |
 | **Phase 2** | Lists CRUD API + Frontend | ✅ Hoàn thành |
 | **Phase 2** | Cards CRUD API + Frontend (title, desc, priority, due date, assignee) | ✅ Hoàn thành |
-| **Phase 2** | Drag & Drop (UI only, chưa persist vào DB) | 🔄 Một phần |
+| **Phase 2** | Drag & Drop (persist vào DB + snapshot rollback) | ✅ Hoàn thành |
 | **Phase 2** | Labels (7 endpoints + full picker UI) | ✅ Hoàn thành |
 | **Phase 3** | Comments (threaded, edit, delete, reply) + CTE bug fix | ✅ Hoàn thành |
 | **Phase 3** | Activity Logs (auto-log + board/card feed UI) | ✅ Hoàn thành |
@@ -584,9 +595,11 @@ Production:
 | **Phase 3** | Card completion toggle (`is_completed`) | ✅ Hoàn thành |
 | **Phase 3** | Board invitation (token-based email flow, 2 luồng) | ✅ Hoàn thành |
 | **Phase 3** | Security hardening (hashed tokens, Redis blacklist, rotation) | ✅ Hoàn thành |
-| **Phase 3** | Checklists | ⏳ Chưa implement |
+| **Phase 3** | Checklists (7 endpoints + item assignee + item due date) | ✅ Hoàn thành |
 | **Phase 4** | Notifications SSE (assign, comment, due date reminder) | ✅ Hoàn thành |
 | **Phase 4** | Unread badge + dropdown (mark read, mark all, delete) | ✅ Hoàn thành |
 | **Phase 5** | Reactive Activity Stream — Phase 1 Foundation | ✅ Hoàn thành |
-| **Phase 5** | Reactive Activity Stream — Phase 2 UX (scroll pill, highlight, badge) | ⏳ Chưa implement |
-| **Phase 5** | Reactive Activity Stream — Phase 3 Resilience (batching, reconnect) | ⏳ Chưa implement |
+| **Phase 5** | Reactive Activity Stream — Phase 2 UX (scroll pill, highlight, badge) | ✅ Hoàn thành |
+| **Phase 5** | Reactive Activity Stream — Phase 3 Resilience (batching, reconnect) | ✅ Hoàn thành |
+| **Phase 6** | Profile Update — `PUT /auth/me` + Multer + MinIO avatar upload | ✅ Hoàn thành |
+| **Phase 6** | Help System — HelpDrawer, USER_GUIDE.md (12 sections), context-aware deep links | ✅ Hoàn thành |

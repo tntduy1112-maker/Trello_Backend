@@ -92,6 +92,12 @@ const updateItem = async (userId, itemId, fields) => {
     const action = fields.is_completed ? 'checklist_item.completed' : 'checklist_item.uncompleted';
     logActivity({ userId, entityType: 'card', entityId: card.id, boardId, action, metadata: { content: item.content } });
   }
+  if ('assigned_to' in fields) {
+    dbFields.assigned_to = fields.assigned_to ?? null;
+    const action = fields.assigned_to ? 'checklist_item.assigned' : 'checklist_item.unassigned';
+    logActivity({ userId, entityType: 'card', entityId: card.id, boardId, action, metadata: { content: item.content } });
+  }
+  if ('due_date' in fields) dbFields.due_date = fields.due_date ?? null;
 
   const updated = await model.updateItem(itemId, dbFields);
   return updated;

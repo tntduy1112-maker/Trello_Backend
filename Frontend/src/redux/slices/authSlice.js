@@ -1,5 +1,5 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit'
-import { getMe } from '../../services/auth.service'
+import { getMe, updateMe } from '../../services/auth.service'
 
 export const fetchMe = createAsyncThunk('auth/fetchMe', async (_, { rejectWithValue }) => {
   try {
@@ -7,6 +7,15 @@ export const fetchMe = createAsyncThunk('auth/fetchMe', async (_, { rejectWithVa
     return res.data.data.user
   } catch (err) {
     return rejectWithValue(err.response?.data?.message || 'Session expired')
+  }
+})
+
+export const updateProfileThunk = createAsyncThunk('auth/updateProfile', async (formData, { rejectWithValue }) => {
+  try {
+    const res = await updateMe(formData)
+    return res.data.data.user
+  } catch (err) {
+    return rejectWithValue(err.response?.data?.message || 'Update failed')
   }
 })
 
@@ -61,6 +70,10 @@ const authSlice = createSlice({
         state.isAuthenticated = false
         localStorage.removeItem('token')
         localStorage.removeItem('user')
+      })
+      .addCase(updateProfileThunk.fulfilled, (state, action) => {
+        state.user = action.payload
+        localStorage.setItem('user', JSON.stringify(action.payload))
       })
   },
 })

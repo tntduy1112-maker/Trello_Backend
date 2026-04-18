@@ -143,7 +143,7 @@ Users
 - `checklist_progress` được tính live từ DB và đồng bộ vào Redux sau mỗi thao tác
 - Backend: 7 endpoints — `GET/POST /cards/:cardId/checklists`, `PUT/DELETE /checklists/:id`, `POST /checklists/:id/items`, `PUT/DELETE /checklist-items/:id`
 - Redux: `cardChecklists[]` + `loadingChecklists` trong store, 7 thunks + `_syncChecklistProgress` helper
-- **Phase 2 (chưa implement):** item assignee (`assigned_to`), item due date (`due_date`)
+- **Phase 2:** item assignee (`assigned_to`) — avatar badge + dropdown picker từ board members; item due date (`due_date`) — date picker inline, badge đỏ nếu quá hạn; activity log `checklist_item.assigned/unassigned`
 
 ---
 
@@ -186,6 +186,18 @@ Users
   - **Highlight fade 3s** — item mới nhận class `animate-fade-highlight` (Tailwind keyframe blue glow → transparent trong 3s, `forwards`); ID tự xoá khỏi `newItemIds` Set sau 3s
   - **Tab badge** — khi tab "Hoạt động" không active mà có inject mới, badge count hiển thị trên tab button; reset khi chuyển sang tab activity
   - Detection pipeline: `prevActivityLenRef` làm baseline sau khi fetch hoàn tất (`activityReadyRef`), `useEffect` trên `cardActivity` tính delta → route đến pill / badge / highlight tùy `activeTabRef` + `isAtTopRef`
+
+---
+
+### 12. Help System ✅ Hoàn thành
+
+- **USER_GUIDE.md** — 12 sections tiếng Việt bao phủ toàn bộ tính năng, phục vụ tĩnh từ `Frontend/public/`
+- **HelpDrawer** — slide-in panel từ phải (500px), `react-markdown` với custom styled components
+- **TOC pills** — parse `## N. Title` từ markdown, cuộn mượt đến section khi click
+- **Navbar entry** — icon `?` (HelpCircle) trên top bar, mở drawer toàn app
+- **CardDetailModal entry** — `?` icon trên header (→ section-5) + inline `?` bên cạnh từng sidebar section label (Thành viên, Nhãn, Đính kèm, Checklist, Ngày hết hạn, Độ ưu tiên)
+- **Route-aware deep link** — mở drawer tự động cuộn đến section phù hợp theo URL hiện tại
+- **UX polish**: backdrop blur, Escape để đóng, error + retry, loading spinner, empty state
 
 ---
 
@@ -236,10 +248,14 @@ Users
 - [x] Unread badge + dropdown UI (mark read, mark all, delete)
 - [x] Due date cron job (chạy mỗi giờ, dedup guard 24h)
 
-### Phase 5 — Reactive Activity Stream 🔄 Đang thực hiện
+### Phase 5 — Reactive Activity Stream ✅ Hoàn thành
 - [x] **Phase 1 — Foundation:** `broadcastCardActivity()` phát SSE tới tất cả board members; `activityLogger` dùng CTE INSERT để lấy lại row kèm user info trong 1 query rồi broadcast ngay; `injectCardActivity` reducer với de-dup theo `event_id`; `useNotificationStream` định tuyến theo `topic`; `CardDetailModal` đăng ký `openCardId` khi mở/đóng
 - [x] **Phase 2 — Core UX:** scroll-aware prepend vs. floating pill; highlight fade animation 3s; tab badge khi có activity mới
-- [ ] **Phase 3 — Resilience:** Type B batching server-side; reconnect refetch; "Live updates paused" banner
+- [x] **Phase 3 — Resilience:** Type B batching server-side (50ms window, single→unwrapped / multi→`card_activity_batch`); `removeClient` dọn batch timer khi disconnect; `isFirstOpen` ref phân biệt reconnect vs initial connect; `setStreamPaused` action cập nhật `streamPaused` + `streamReconnectedAt`; CardDetailModal refetch activity khi SSE reconnect; "Kết nối gián đoạn" banner trong activity panel
+
+### Phase 6 — Profile Update & Help System ✅ Hoàn thành
+- [x] **Profile Update:** `PUT /auth/me` — Multer memoryStorage, fileFilter image/*, 2MB limit; MinIO `uploadFile` + `deleteFile` (old avatar cleanup); `updateUser` DB; `updateProfileThunk` Redux thunk + fulfilled reducer cập nhật `state.user` + localStorage
+- [x] **Help System:** `HelpDrawer.jsx` — slide-in drawer, `react-markdown` custom components, TOC pill navigation, route-aware auto-scroll, Escape/backdrop close, loading/error/retry states; `USER_GUIDE.md` 12 sections tiếng Việt; Navbar `?` global entry; CardDetailModal dual-entry (header + per-section inline)
 
 ---
 
@@ -263,7 +279,7 @@ Duy_AI_Plan/
 │       │   ├── minio.js               ← MinIO client + initBucket
 │       │   └── redis.js               ← ioredis client
 │       ├── modules/
-│       │   ├── auth/                  ✅ 9 endpoints
+│       │   ├── auth/                  ✅ 10 endpoints
 │       │   ├── organizations/         ✅ 9 endpoints
 │       │   ├── boards/                ✅ 10 endpoints
 │       │   ├── lists/                 ✅ 4 endpoints
@@ -297,7 +313,7 @@ Duy_AI_Plan/
         ├── hooks/
         │   └── useNotificationStream.js ← SSE hook; topic routing: card_activity → injectCardActivity
         ├── redux/slices/
-        │   ├── authSlice.js           ✅ fetchMe, setCredentials
+        │   ├── authSlice.js           ✅ fetchMe, setCredentials, updateProfileThunk
         │   ├── workspaceSlice.js      ✅ CRUD thunks
         │   ├── boardSlice.js          ✅ lists, cards, labels, comments, activity, attachments, checklists (44+ thunks)
         │   │                             + openCardId, setOpenCardId, injectCardActivity, _syncChecklistProgress

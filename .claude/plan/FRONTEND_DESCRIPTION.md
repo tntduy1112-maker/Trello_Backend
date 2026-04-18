@@ -41,7 +41,8 @@ Frontend/src/
 │       ├── NotificationDropdown.jsx
 │       ├── ProgressBar.jsx
 │       ├── Spinner.jsx
-│       └── Tooltip.jsx
+│       ├── Tooltip.jsx
+│       └── HelpDrawer.jsx
 ├── context/
 │   └── AuthContext.jsx       ← (legacy, chưa dùng chính — auth qua Redux)
 ├── data/
@@ -107,7 +108,8 @@ Redux Store
 │   ├── user                  ← profile object { id, email, full_name, avatar_url }
 │   ├── token                 ← JWT access token (localStorage + Redux)
 │   ├── refreshToken          ← (localStorage)
-│   └── isAuthenticated
+│   ├── isAuthenticated
+│   Thunks: fetchMe, updateProfileThunk (PUT /auth/me — multipart/form-data, MinIO avatar)
 │
 ├── workspaceSlice
 │   └── workspaces []         ← danh sách org của user
@@ -173,7 +175,7 @@ axiosInstance.js
 
 services/ (mỗi file là một domain):
   auth.service.js        → login, register, verifyEmail, forgotPassword,
-                           resetPassword, refreshToken, getMe, logout
+                           resetPassword, refreshToken, getMe, logout, updateMe
   workspace.service.js   → getWorkspaces, createWorkspace, updateWorkspace,
                            deleteWorkspace, getWorkspaceMembers, inviteMember,
                            updateMemberRole, removeMember
@@ -272,7 +274,7 @@ mount → dispatch(clearBoard())
 - `DragOverlay` hiển thị ghost card khi đang kéo (rotate 3deg, scale 1.05)
 - `onDragOver`: xử lý move card giữa 2 list khác nhau (optimistic update Redux)
 - `onDragEnd`: xử lý reorder cuối cùng
-- ⚠️ **Chưa persist**: vị trí sau khi kéo chưa được ghi vào DB
+- ✅ **Persist DnD**: vị trí sau khi kéo được ghi vào DB ngay lập tức; snapshot rollback nếu API lỗi
 
 ---
 
@@ -291,7 +293,7 @@ Mở overlay modal khi click vào `CardItem`, không navigate sang trang mới.
 | Labels | ✅ | Picker đầy đủ: tạo nhãn (tên + 10 màu), toggle assign/unassign, edit tên/màu inline, xoá nhãn khỏi board |
 | Due Date | ✅ | `<input type="date">`, đỏ khi `isOverdue()` |
 | Priority | ✅ | 4 options (Low/Medium/High/Critical), highlight lựa chọn hiện tại |
-| Checklists | ⏳ | Hiển thị nếu `card.checklist_progress` có, chưa có API |
+| Checklists | ✅ | Tạo/đổi tên/xóa checklist; thêm/sửa/toggle/xóa item; progress bar; assignee + due date per item |
 | Comments | ✅ | Tab "Bình luận": tạo mới, reply (1 cấp), edit inline (tác giả), xóa, spinner states, "(đã sửa)" |
 | Activity Log | ✅ | Tab "Hoạt động": load từ Redux `cardActivity`, **live update via SSE** (injectCardActivity), mô tả tiếng Việt, avatar, relative time |
 | Attachments | ✅ | Upload (multer multipart), download (File System Access API + fallback), xóa, toggle cover image |
@@ -326,7 +328,8 @@ boardMembers (từ props, fetch từ GET /boards/:boardId/members)
 ### 5. Profile Page ✅ Hoàn thành
 
 - Hiển thị thông tin user từ Redux (`user.full_name`, `user.email`, `user.created_at`)
-- Cập nhật tên → dispatch `updateCurrentUser` → cập nhật Redux local (chưa có `PUT /auth/me` API)
+- Cập nhật tên + avatar → `dispatch(updateProfileThunk(formData))` → `PUT /auth/me` (multipart) → MinIO upload → cập nhật DB + Redux + localStorage
+- Avatar preview trước khi lưu; xóa avatar cũ trên MinIO tự động khi upload mới
 - Đổi mật khẩu → redirect sang `/forgot-password` flow
 - Đăng xuất → `POST /auth/logout` → xóa localStorage → dispatch `logout` → redirect `/login`
 
@@ -340,14 +343,14 @@ boardMembers (từ props, fetch từ GET /boards/:boardId/members)
 - [x] Invite member vào workspace
 - [x] Kết nối toàn bộ API thật (bỏ mock data)
 
-### Phase 2 — Board & Kanban 🔄 Đang thực hiện
+### Phase 2 — Board & Kanban ✅ Hoàn thành
 - [x] Board list, create board modal
 - [x] Kanban board layout (lists + cards từ API)
 - [x] Drag & drop lists và cards (UI)
 - [x] Tạo list, tạo card qua API
 - [x] Card detail modal (core: title, desc, priority, due date, assignee)
 - [x] Save card xuống DB với validation
-- [ ] **Persist DnD position vào DB** (gọi PUT sau `onDragEnd`)
+- [x] **Persist DnD position vào DB** (snapshot rollback nếu API lỗi)
 - [x] Labels & label picker (tạo, toggle assign, edit, xoá)
 
 ### Phase 3 — Advanced Card Features ✅ Hoàn thành
@@ -356,17 +359,24 @@ boardMembers (từ props, fetch từ GET /boards/:boardId/members)
 - [x] Attachments upload (MinIO, cover image, per-file spinner, File System Access API download)
 - [x] Card completion toggle (`is_completed`, visual feedback)
 - [x] Board invitation (AcceptInvitePage, pre-fill email on register)
-- [ ] Checklists & checklist items
+- [x] Checklists & checklist items (create, rename, delete, add/edit/toggle/delete items, progress bar)
 
 ### Phase 4 — Notifications ✅ Hoàn thành
 - [x] Notification bell + unread badge (real-time từ SSE)
 - [x] NotificationDropdown (mark read, mark all, delete, icons by type, relative time)
 - [x] useNotificationStream hook (EventSource, topic routing)
 
-### Phase 5 — Reactive Activity Stream 🔄 Đang thực hiện
+### Phase 5 — Reactive Activity Stream ✅ Hoàn thành
 - [x] Phase 1: Foundation — injectCardActivity reducer, setOpenCardId, SSE topic routing
-- [ ] Phase 2: Scroll-aware prepend, highlight fade, tab badge
-- [ ] Phase 3: Type B batching, reconnect refetch, "Live updates paused" banner
+- [x] Phase 2: Scroll-aware prepend, highlight fade, tab badge
+- [x] Phase 3: Type B batching, reconnect refetch, "Kết nối gián đoạn" banner
+
+### Phase 6 — Profile Update & Help System ✅ Hoàn thành
+- [x] Profile Update: `updateProfileThunk` → `PUT /auth/me` (multipart/form-data) → MinIO avatar
+- [x] HelpDrawer component: slide-in panel, `react-markdown` render, TOC pills, Escape/backdrop close
+- [x] USER_GUIDE.md (12 sections tiếng Việt) phục vụ tĩnh từ `Frontend/public/`
+- [x] Route-aware auto-scroll: `/board/` → section-5, `/profile` → section-12, v.v.
+- [x] Context help trong CardDetailModal: `?` icon trên header + inline `?` per sidebar section
 
 ---
 
@@ -386,4 +396,5 @@ boardMembers (từ props, fetch từ GET /boards/:boardId/members)
 | HTTP Client | Axios | 1.7.9 |
 | Routing | React Router | 7.1.1 |
 | Icons | Lucide React | 0.469.0 |
+| Markdown Renderer | react-markdown | 9.x |
 | Date handling | Custom helpers (không dùng date-fns) | — |

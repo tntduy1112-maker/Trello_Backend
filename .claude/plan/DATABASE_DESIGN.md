@@ -380,13 +380,13 @@ CREATE INDEX idx_notifications_user_id ON notifications(user_id, is_read);
 - [x] `labels`, `card_labels`
 
 ### Phase 3 — Advanced Card Features
-- [ ] `checklists`, `checklist_items`
+- [x] `checklists`, `checklist_items` — 7 endpoints + full UI (create/rename/delete, add/edit/toggle/delete items, progress bar, board view badge, item assignee, item due date) ✅
 - [x] `comments` — API (GET/POST/PUT/DELETE) + threaded UI (edit/delete/reply) ✅
-- [ ] `attachments`
+- [x] `attachments` — MinIO upload/delete/cover, 4 endpoints ✅
 
 ### Phase 4 — Monitoring & Notifications
 - [x] `activity_logs` — API (GET /boards/:id/activity, GET /cards/:id/activity) + Activity tab in CardDetailModal ✅
-- [ ] `notifications`
+- [x] `notifications` — SSE real-time, 6 endpoints, unread badge + dropdown ✅
 
 ---
 

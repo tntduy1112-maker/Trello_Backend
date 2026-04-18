@@ -5,7 +5,8 @@ import {
   Archive, Trash2, Plus, Check,
   Edit3, UserX, Tag, Pencil, Activity,
   Paperclip, FileText, Image, Download, CheckCircle, AlertCircle,
-  LayoutList, ChevronDown, ArrowUp,
+  LayoutList, ChevronDown, ArrowUp, WifiOff,
+  UserPlus, Calendar, HelpCircle,
 } from 'lucide-react'
 import {
   updateCard, saveCardThunk, deleteCardThunk,
@@ -17,12 +18,13 @@ import {
   deleteAttachmentThunk, toggleAttachmentCoverThunk,
   moveCardFromModalThunk, setOpenCardId,
   fetchCardChecklists, createChecklistThunk, updateChecklistThunk, deleteChecklistThunk,
-  addItemThunk, updateItemThunk, deleteItemThunk,
+  addItemThunk, updateItemThunk, deleteItemThunk, setStreamPaused,
 } from '../../redux/slices/boardSlice'
 import { formatDate, formatRelativeTime, isOverdue } from '../../utils/helpers'
 import { PRIORITY_COLOR } from '../../data/constants'
 import Avatar from '../ui/Avatar'
 import ProgressBar from '../ui/ProgressBar'
+import HelpDrawer from '../ui/HelpDrawer'
 
 const PRIORITY_OPTIONS = [
   { value: 'low', label: 'Thấp', color: 'text-blue-400' },
@@ -81,6 +83,8 @@ const ACTION_LABEL = {
   'checklist.deleted': (m) => `đã xóa checklist "${m?.title || ''}"`,
   'checklist_item.completed': (m) => `đã hoàn thành mục "${m?.content || ''}"`,
   'checklist_item.uncompleted': (m) => `đã bỏ hoàn thành mục "${m?.content || ''}"`,
+  'checklist_item.assigned': (m) => `đã giao mục "${m?.content || ''}"`,
+  'checklist_item.unassigned': (m) => `đã bỏ giao mục "${m?.content || ''}"`,
 }
 
 const getActionLabel = (log) => {
@@ -102,6 +106,8 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
   const loadingAttachments = useSelector((state) => state.board.loadingAttachments)
   const cardChecklists = useSelector((state) => state.board.cardChecklists)
   const loadingChecklists = useSelector((state) => state.board.loadingChecklists)
+  const streamPaused        = useSelector((state) => state.board.streamPaused)
+  const streamReconnectedAt = useSelector((state) => state.board.streamReconnectedAt)
 
   // Tracks which list this card currently belongs to (can change after an in-modal move)
   const [currentListId, setCurrentListId] = useState(listId)
@@ -160,10 +166,16 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
 
   // Attachments
   const fileInputRef = useRef(null)
+  const assigneeItemPickerRef = useRef(null)
+  const dueDateItemPickerRef = useRef(null)
+  const isAddingItemRef = useRef(false)
   const [uploadingFile, setUploadingFile] = useState(false)
   const [uploadError, setUploadError] = useState('')
   const [downloadingId, setDownloadingId] = useState(null)
   const [toast, setToast] = useState(null) // { message, type: 'success'|'error' }
+
+  // Help drawer
+  const [helpSection, setHelpSection] = useState(null)
 
   // Checklists
   const [addingChecklist, setAddingChecklist] = useState(false)
@@ -175,6 +187,9 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
   const [newItemContent, setNewItemContent] = useState('')
   const [editingItemId, setEditingItemId] = useState(null)
   const [editingItemContent, setEditingItemContent] = useState('')
+  const [assigneePickerItemId, setAssigneePickerItemId] = useState(null)
+  const [dueDateEditItemId, setDueDateEditItemId] = useState(null)
+  const [dueDateEditValue, setDueDateEditValue] = useState('')
 
   // ── Activity stream UX ────────────────────────────────────────────────────
   const activityScrollRef   = useRef(null)
@@ -252,6 +267,12 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
     isAtTopRef.current = true
   }, [card?.id])
 
+  // Refetch activity when SSE reconnects while this modal is open (catches missed events)
+  useEffect(() => {
+    if (!streamReconnectedAt || !isOpen || !card?.id) return
+    dispatch(fetchCardActivity(card.id))
+  }, [streamReconnectedAt])
+
   // Close pickers when clicking outside
   useEffect(() => {
     const handler = (e) => {
@@ -264,6 +285,12 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
       }
       if (listPickerRef.current && !listPickerRef.current.contains(e.target)) {
         setShowListPicker(false)
+      }
+      if (assigneeItemPickerRef.current && !assigneeItemPickerRef.current.contains(e.target)) {
+        setAssigneePickerItemId(null)
+      }
+      if (dueDateItemPickerRef.current && !dueDateItemPickerRef.current.contains(e.target)) {
+        setDueDateEditItemId(null)
       }
     }
     document.addEventListener('mousedown', handler)
@@ -620,9 +647,16 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
   }
 
   const handleAddItem = async (checklistId) => {
-    if (!newItemContent.trim()) return
-    await dispatch(addItemThunk({ checklistId, cardId: card.id, listId: currentListId, content: newItemContent.trim() })).unwrap()
+    if (isAddingItemRef.current) return
+    const content = newItemContent.trim()
+    if (!content) return
+    isAddingItemRef.current = true
     setNewItemContent('')
+    try {
+      await dispatch(addItemThunk({ checklistId, cardId: card.id, listId: currentListId, content })).unwrap()
+    } finally {
+      isAddingItemRef.current = false
+    }
   }
 
   const handleToggleItem = (item, checklistId) => {
@@ -643,6 +677,31 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
 
   const handleDeleteItem = (itemId, checklistId) => {
     dispatch(deleteItemThunk({ itemId, checklistId, cardId: card.id, listId: currentListId }))
+  }
+
+  const handleAssignItem = (item, checklistId, member) => {
+    dispatch(updateItemThunk({
+      itemId: item.id, checklistId, cardId: card.id, listId: currentListId,
+      fields: { assigned_to: member ? member.user_id : null },
+    }))
+    setAssigneePickerItemId(null)
+  }
+
+  const handleSetItemDueDate = (item, checklistId) => {
+    if (!dueDateEditValue) return
+    dispatch(updateItemThunk({
+      itemId: item.id, checklistId, cardId: card.id, listId: currentListId,
+      fields: { due_date: dueDateEditValue },
+    }))
+    setDueDateEditItemId(null)
+  }
+
+  const handleClearItemDueDate = (item, checklistId) => {
+    dispatch(updateItemThunk({
+      itemId: item.id, checklistId, cardId: card.id, listId: currentListId,
+      fields: { due_date: null },
+    }))
+    setDueDateEditItemId(null)
   }
 
   const handleActivityScroll = useCallback(() => {
@@ -702,13 +761,22 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
           </div>
         )}
 
-        {/* Close button */}
-        <button
-          onClick={onClose}
-          className="absolute top-3 right-3 p-2 rounded-xl hover:bg-[#454F59] text-[#8C9BAB] hover:text-white transition-colors z-10"
-        >
-          <X size={18} />
-        </button>
+        {/* Header actions: Help + Close */}
+        <div className="absolute top-3 right-3 flex items-center gap-1 z-10">
+          <button
+            onClick={() => setHelpSection('section-5')}
+            title="Hướng dẫn sử dụng card"
+            className="p-2 rounded-xl hover:bg-[#454F59] text-[#596773] hover:text-[#0C66E4] transition-colors"
+          >
+            <HelpCircle size={16} />
+          </button>
+          <button
+            onClick={onClose}
+            className="p-2 rounded-xl hover:bg-[#454F59] text-[#8C9BAB] hover:text-white transition-colors"
+          >
+            <X size={18} />
+          </button>
+        </div>
 
         <div className="flex gap-4 p-5">
           {/* Main content (left 2/3) */}
@@ -777,13 +845,13 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
                   <div className="flex gap-2 mt-2">
                     <button
                       onClick={handleSaveDesc}
-                      className="px-3 py-1.5 bg-[#0C66E4] hover:bg-[#0055CC] text-white rounded-lg text-xs font-medium transition-colors"
+                      className="px-3 py-1.5 bg-[#0C66E4] hover:bg-[#0055CC] text-white rounded-full text-xs font-medium transition-colors"
                     >
                       Lưu
                     </button>
                     <button
                       onClick={() => { setDescription(card.description || ''); setEditingDesc(false); setDescError('') }}
-                      className="px-3 py-1.5 bg-[#2C333A] hover:bg-[#38424B] text-[#B6C2CF] rounded-lg text-xs transition-colors"
+                      className="px-3 py-1.5 bg-[#2C333A] hover:bg-[#38424B] text-[#B6C2CF] rounded-full text-xs transition-colors"
                     >
                       Hủy
                     </button>
@@ -858,47 +926,156 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
 
                       {/* Items */}
                       <div className="space-y-1 ml-6">
-                        {items.map((item) => (
-                          <div key={item.id} className="flex items-start gap-2 group">
-                            <input
-                              type="checkbox"
-                              checked={item.is_completed}
-                              onChange={() => handleToggleItem(item, checklist.id)}
-                              className="w-4 h-4 mt-0.5 flex-shrink-0 rounded border-[#454F59] bg-[#22272B] accent-[#0C66E4] cursor-pointer"
-                            />
-                            {editingItemId === item.id ? (
-                              <div className="flex-1 flex gap-2">
-                                <input
-                                  autoFocus
-                                  value={editingItemContent}
-                                  onChange={(e) => setEditingItemContent(e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') handleEditItem(item.id, checklist.id)
-                                    if (e.key === 'Escape') setEditingItemId(null)
-                                  }}
-                                  className="flex-1 px-2 py-0.5 bg-[#22272B] border border-[#454F59] rounded text-sm text-[#B6C2CF] focus:outline-none focus:ring-1 focus:ring-[#0C66E4]"
-                                />
-                                <button onClick={() => handleEditItem(item.id, checklist.id)} className="px-2 py-0.5 bg-[#0C66E4] hover:bg-[#0055CC] rounded text-xs text-white transition-colors">Lưu</button>
-                                <button onClick={() => setEditingItemId(null)} className="px-2 py-0.5 bg-[#2C333A] hover:bg-[#38424B] rounded text-xs text-[#B6C2CF] transition-colors">Hủy</button>
+                        {items.map((item) => {
+                          const itemAssignee = item.assigned_to
+                            ? boardMembers.find((m) => m.user_id === item.assigned_to)
+                            : null
+                          return (
+                            <div key={item.id} className="flex items-start gap-2 group relative">
+                              <input
+                                type="checkbox"
+                                checked={item.is_completed}
+                                onChange={() => handleToggleItem(item, checklist.id)}
+                                className="w-4 h-4 mt-0.5 flex-shrink-0 rounded border-[#454F59] bg-[#22272B] accent-[#0C66E4] cursor-pointer"
+                              />
+                              <div className="flex-1 min-w-0">
+                                {editingItemId === item.id ? (
+                                  <div className="flex gap-2">
+                                    <input
+                                      autoFocus
+                                      value={editingItemContent}
+                                      onChange={(e) => setEditingItemContent(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') handleEditItem(item.id, checklist.id)
+                                        if (e.key === 'Escape') setEditingItemId(null)
+                                      }}
+                                      className="flex-1 px-2 py-0.5 bg-[#22272B] border border-[#454F59] rounded text-sm text-[#B6C2CF] focus:outline-none focus:ring-1 focus:ring-[#0C66E4]"
+                                    />
+                                    <button onClick={() => handleEditItem(item.id, checklist.id)} className="px-2 py-0.5 bg-[#0C66E4] hover:bg-[#0055CC] rounded text-xs text-white transition-colors">Lưu</button>
+                                    <button onClick={() => setEditingItemId(null)} className="px-2 py-0.5 bg-[#2C333A] hover:bg-[#38424B] rounded text-xs text-[#B6C2CF] transition-colors">Hủy</button>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <span
+                                      className={`text-sm cursor-pointer hover:text-white transition-colors ${
+                                        item.is_completed ? 'line-through text-[#596773]' : 'text-[#B6C2CF]'
+                                      }`}
+                                      onClick={() => { setEditingItemId(item.id); setEditingItemContent(item.content) }}
+                                    >
+                                      {item.content}
+                                    </span>
+                                    {(itemAssignee || item.due_date) && (
+                                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                        {itemAssignee && (
+                                          <button
+                                            onClick={() => { setAssigneePickerItemId(item.id); setDueDateEditItemId(null) }}
+                                            className="flex items-center gap-1 text-xs text-[#8C9BAB] hover:text-[#B6C2CF] transition-colors"
+                                          >
+                                            <Avatar src={itemAssignee.avatar_url} name={itemAssignee.full_name} size="xs" />
+                                            <span className="max-w-[80px] truncate">{itemAssignee.full_name}</span>
+                                          </button>
+                                        )}
+                                        {item.due_date && (
+                                          <button
+                                            onClick={() => { setDueDateEditItemId(item.id); setDueDateEditValue(item.due_date?.slice(0, 10) || ''); setAssigneePickerItemId(null) }}
+                                            className={`flex items-center gap-1 text-xs px-1.5 py-0.5 rounded transition-colors ${
+                                              isOverdue(item.due_date)
+                                                ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
+                                                : 'bg-[#2C333A] text-[#8C9BAB] hover:bg-[#38424B]'
+                                            }`}
+                                          >
+                                            <Calendar size={9} />
+                                            {formatDate(item.due_date)}
+                                          </button>
+                                        )}
+                                      </div>
+                                    )}
+                                  </>
+                                )}
                               </div>
-                            ) : (
-                              <span
-                                className={`flex-1 text-sm cursor-pointer hover:text-white transition-colors ${
-                                  item.is_completed ? 'line-through text-[#596773]' : 'text-[#B6C2CF]'
-                                }`}
-                                onClick={() => { setEditingItemId(item.id); setEditingItemContent(item.content) }}
-                              >
-                                {item.content}
-                              </span>
-                            )}
-                            <button
-                              onClick={() => handleDeleteItem(item.id, checklist.id)}
-                              className="opacity-0 group-hover:opacity-100 text-[#596773] hover:text-red-400 transition-all flex-shrink-0 mt-0.5"
-                            >
-                              <X size={12} />
-                            </button>
-                          </div>
-                        ))}
+                              {/* Hover action buttons */}
+                              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mt-0.5">
+                                <button
+                                  title="Giao việc"
+                                  onClick={() => { setAssigneePickerItemId(assigneePickerItemId === item.id ? null : item.id); setDueDateEditItemId(null) }}
+                                  className="p-0.5 rounded text-[#596773] hover:text-[#B6C2CF] hover:bg-[#2C333A] transition-colors"
+                                >
+                                  <UserPlus size={11} />
+                                </button>
+                                <button
+                                  title="Đặt ngày"
+                                  onClick={() => { setDueDateEditItemId(dueDateEditItemId === item.id ? null : item.id); setDueDateEditValue(item.due_date?.slice(0, 10) || ''); setAssigneePickerItemId(null) }}
+                                  className="p-0.5 rounded text-[#596773] hover:text-[#B6C2CF] hover:bg-[#2C333A] transition-colors"
+                                >
+                                  <Calendar size={11} />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteItem(item.id, checklist.id)}
+                                  className="p-0.5 rounded text-[#596773] hover:text-red-400 hover:bg-[#2C333A] transition-colors"
+                                >
+                                  <X size={11} />
+                                </button>
+                              </div>
+                              {/* Assignee picker dropdown */}
+                              {assigneePickerItemId === item.id && (
+                                <div ref={assigneeItemPickerRef} className="absolute right-0 top-6 w-52 bg-[#282E33] border border-[#454F59] rounded-xl shadow-xl z-30 overflow-hidden">
+                                  <div className="px-3 py-2 border-b border-[#454F59]">
+                                    <p className="text-xs font-semibold text-[#8C9BAB]">Giao cho</p>
+                                  </div>
+                                  {boardMembers.length === 0 ? (
+                                    <div className="px-3 py-4 text-xs text-[#596773] text-center">Chưa có thành viên</div>
+                                  ) : (
+                                    <ul className="py-1 max-h-48 overflow-y-auto">
+                                      {boardMembers.map((member) => {
+                                        const isSelected = item.assigned_to === member.user_id
+                                        return (
+                                          <li key={member.id || member.user_id}>
+                                            <button
+                                              onClick={() => handleAssignItem(item, checklist.id, isSelected ? null : member)}
+                                              className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-[#2C333A] ${isSelected ? 'bg-[#0C66E4]/10' : ''}`}
+                                            >
+                                              <Avatar src={member.avatar_url} name={member.full_name} size="sm" />
+                                              <span className="flex-1 text-xs text-[#B6C2CF] truncate">{member.full_name}</span>
+                                              {isSelected && <Check size={12} className="text-[#0C66E4] flex-shrink-0" />}
+                                            </button>
+                                          </li>
+                                        )
+                                      })}
+                                    </ul>
+                                  )}
+                                </div>
+                              )}
+                              {/* Due date editor */}
+                              {dueDateEditItemId === item.id && (
+                                <div ref={dueDateItemPickerRef} className="absolute right-0 top-6 bg-[#282E33] border border-[#454F59] rounded-xl shadow-xl z-30 p-3 min-w-[200px]">
+                                  <p className="text-xs font-semibold text-[#8C9BAB] mb-2">Ngày đến hạn</p>
+                                  <input
+                                    type="date"
+                                    value={dueDateEditValue}
+                                    onChange={(e) => setDueDateEditValue(e.target.value)}
+                                    className="w-full px-2 py-1.5 bg-[#22272B] border border-[#454F59] rounded text-xs text-[#B6C2CF] focus:outline-none focus:border-[#0C66E4]"
+                                  />
+                                  <div className="flex gap-2 mt-2">
+                                    <button
+                                      onClick={() => handleSetItemDueDate(item, checklist.id)}
+                                      className="flex-1 px-2 py-1 bg-[#0C66E4] hover:bg-[#0055CC] rounded text-xs text-white transition-colors"
+                                    >Lưu</button>
+                                    {item.due_date && (
+                                      <button
+                                        onClick={() => handleClearItemDueDate(item, checklist.id)}
+                                        className="px-2 py-1 bg-[#2C333A] hover:bg-[#38424B] rounded text-xs text-[#596773] hover:text-red-400 transition-colors"
+                                      >Xóa</button>
+                                    )}
+                                    <button
+                                      onClick={() => setDueDateEditItemId(null)}
+                                      className="px-2 py-1 bg-[#2C333A] hover:bg-[#38424B] rounded text-xs text-[#B6C2CF] transition-colors"
+                                    >Hủy</button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
 
                         {/* Add item form */}
                         {addingItemChecklistId === checklist.id ? (
@@ -915,8 +1092,8 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
                               className="w-full px-3 py-2 bg-[#22272B] border border-[#454F59] rounded-lg text-sm text-[#B6C2CF] placeholder-[#596773] focus:outline-none focus:ring-1 focus:ring-[#0C66E4]"
                             />
                             <div className="flex gap-2 mt-2">
-                              <button onClick={() => handleAddItem(checklist.id)} className="px-3 py-1.5 bg-[#0C66E4] hover:bg-[#0055CC] rounded-lg text-xs text-white transition-colors">Thêm</button>
-                              <button onClick={() => { setAddingItemChecklistId(null); setNewItemContent('') }} className="px-3 py-1.5 bg-[#2C333A] hover:bg-[#38424B] rounded-lg text-xs text-[#B6C2CF] transition-colors">Hủy</button>
+                              <button onClick={() => handleAddItem(checklist.id)} className="px-3 py-1.5 bg-[#0C66E4] hover:bg-[#0055CC] rounded-full text-xs text-white transition-colors">Thêm</button>
+                              <button onClick={() => { setAddingItemChecklistId(null); setNewItemContent('') }} className="px-3 py-1.5 bg-[#2C333A] hover:bg-[#38424B] rounded-full text-xs text-[#B6C2CF] transition-colors">Hủy</button>
                             </div>
                           </div>
                         ) : (
@@ -1053,7 +1230,7 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
                       <button
                         onClick={handleAddComment}
                         disabled={!comment.trim() || submittingComment}
-                        className="mt-2 px-3 py-1.5 bg-[#0C66E4] hover:bg-[#0055CC] disabled:opacity-50 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5"
+                        className="mt-2 px-3 py-1.5 bg-[#0C66E4] hover:bg-[#0055CC] disabled:opacity-50 text-white rounded-full text-xs font-medium transition-colors flex items-center gap-1.5"
                       >
                         {submittingComment && <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                         Gửi
@@ -1090,11 +1267,11 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
                                     className="w-full px-3 py-2 bg-[#22272B] border border-[#0C66E4] rounded-xl text-[#B6C2CF] text-sm resize-none focus:outline-none"
                                   />
                                   <div className="flex gap-2 mt-1.5">
-                                    <button onClick={handleSaveEdit} disabled={savingEdit} className="px-3 py-1 bg-[#0C66E4] hover:bg-[#0055CC] disabled:opacity-50 text-white rounded-lg text-xs font-medium flex items-center gap-1">
+                                    <button onClick={handleSaveEdit} disabled={savingEdit} className="px-3 py-1 bg-[#0C66E4] hover:bg-[#0055CC] disabled:opacity-50 text-white rounded-full text-xs font-medium flex items-center gap-1">
                                       {savingEdit && <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                                       Lưu
                                     </button>
-                                    <button onClick={() => setEditingComment(null)} className="px-3 py-1 bg-[#2C333A] hover:bg-[#38424B] text-[#B6C2CF] rounded-lg text-xs">Hủy</button>
+                                    <button onClick={() => setEditingComment(null)} className="px-3 py-1 bg-[#2C333A] hover:bg-[#38424B] text-[#B6C2CF] rounded-full text-xs">Hủy</button>
                                   </div>
                                 </div>
                               ) : (
@@ -1154,11 +1331,11 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
                                           className="w-full px-3 py-2 bg-[#22272B] border border-[#0C66E4] rounded-xl text-[#B6C2CF] text-sm resize-none focus:outline-none"
                                         />
                                         <div className="flex gap-2 mt-1.5">
-                                          <button onClick={handleSaveEdit} disabled={savingEdit} className="px-3 py-1 bg-[#0C66E4] hover:bg-[#0055CC] disabled:opacity-50 text-white rounded-lg text-xs font-medium flex items-center gap-1">
+                                          <button onClick={handleSaveEdit} disabled={savingEdit} className="px-3 py-1 bg-[#0C66E4] hover:bg-[#0055CC] disabled:opacity-50 text-white rounded-full text-xs font-medium flex items-center gap-1">
                                             {savingEdit && <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                                             Lưu
                                           </button>
-                                          <button onClick={() => setEditingComment(null)} className="px-3 py-1 bg-[#2C333A] hover:bg-[#38424B] text-[#B6C2CF] rounded-lg text-xs">Hủy</button>
+                                          <button onClick={() => setEditingComment(null)} className="px-3 py-1 bg-[#2C333A] hover:bg-[#38424B] text-[#B6C2CF] rounded-full text-xs">Hủy</button>
                                         </div>
                                       </div>
                                     ) : (
@@ -1205,12 +1382,12 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
                                       <button
                                         onClick={() => handleAddReply(c.id)}
                                         disabled={!replyText.trim() || submittingReply}
-                                        className="px-3 py-1 bg-[#0C66E4] hover:bg-[#0055CC] disabled:opacity-50 text-white rounded-lg text-xs font-medium flex items-center gap-1"
+                                        className="px-3 py-1 bg-[#0C66E4] hover:bg-[#0055CC] disabled:opacity-50 text-white rounded-full text-xs font-medium flex items-center gap-1"
                                       >
                                         {submittingReply && <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                                         Gửi
                                       </button>
-                                      <button onClick={() => { setReplyingTo(null); setReplyText('') }} className="px-3 py-1 bg-[#2C333A] hover:bg-[#38424B] text-[#B6C2CF] rounded-lg text-xs">Hủy</button>
+                                      <button onClick={() => { setReplyingTo(null); setReplyText('') }} className="px-3 py-1 bg-[#2C333A] hover:bg-[#38424B] text-[#B6C2CF] rounded-full text-xs">Hủy</button>
                                     </div>
                                   </div>
                                 </div>
@@ -1227,6 +1404,14 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
               {/* Activity panel */}
               {activeTab === 'activity' && (
                 <div className="relative">
+                  {/* Live updates paused banner */}
+                  {streamPaused && (
+                    <div className="flex items-center gap-2 px-3 py-2 mb-2 bg-yellow-950/60 border border-yellow-700/40 text-yellow-300 text-xs rounded-lg animate-fade-in">
+                      <WifiOff size={12} className="flex-shrink-0" />
+                      Kết nối gián đoạn — hoạt động trực tiếp đang tạm dừng...
+                    </div>
+                  )}
+
                   {/* Floating pill — new items arrived while scrolled down */}
                   {unseenCount > 0 && (
                     <div className="flex justify-center mb-2">
@@ -1284,7 +1469,10 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
           <div className="w-44 flex-shrink-0 space-y-4">
             {/* Members — single assignee picker */}
             <div ref={memberPickerRef} className="relative">
-              <p className="text-xs font-semibold text-[#8C9BAB] mb-2 uppercase tracking-wide">Thành viên</p>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold text-[#8C9BAB] uppercase tracking-wide">Thành viên</p>
+                <button onClick={() => setHelpSection('section-5')} title="Xem hướng dẫn" className="text-[#454F59] hover:text-[#0C66E4] transition-colors"><HelpCircle size={11} /></button>
+              </div>
 
               {assignee ? (
                 <div className="flex items-center gap-2 mb-2 p-2 bg-[#2C333A] rounded-lg">
@@ -1353,7 +1541,10 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
 
             {/* ── Labels ───────────────────────────────────────────── */}
             <div ref={labelPickerRef} className="relative">
-              <p className="text-xs font-semibold text-[#8C9BAB] mb-2 uppercase tracking-wide">Nhãn</p>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold text-[#8C9BAB] uppercase tracking-wide">Nhãn</p>
+                <button onClick={() => setHelpSection('section-6')} title="Xem hướng dẫn" className="text-[#454F59] hover:text-[#0C66E4] transition-colors"><HelpCircle size={11} /></button>
+              </div>
 
               {/* Current card labels */}
               <div className="flex flex-wrap gap-1 mb-2">
@@ -1519,7 +1710,7 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
                     <button
                       onClick={handleCreateLabel}
                       disabled={!newLabelName.trim() || creatingLabel}
-                      className="w-full flex items-center justify-center gap-2 py-1.5 bg-[#0C66E4] hover:bg-[#0055CC] disabled:opacity-50 text-white rounded-lg text-xs font-medium transition-colors"
+                      className="w-full flex items-center justify-center gap-2 py-1.5 bg-[#0C66E4] hover:bg-[#0055CC] disabled:opacity-50 text-white rounded-full text-xs font-medium transition-colors"
                     >
                       {creatingLabel && (
                         <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -1591,7 +1782,10 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
 
             {/* Attachments upload */}
             <div>
-              <p className="text-xs font-semibold text-[#8C9BAB] mb-2 uppercase tracking-wide">Đính kèm</p>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold text-[#8C9BAB] uppercase tracking-wide">Đính kèm</p>
+                <button onClick={() => setHelpSection('section-9')} title="Xem hướng dẫn" className="text-[#454F59] hover:text-[#0C66E4] transition-colors"><HelpCircle size={11} /></button>
+              </div>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -1622,7 +1816,10 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
 
             {/* Checklist */}
             <div>
-              <p className="text-xs font-semibold text-[#8C9BAB] mb-2 uppercase tracking-wide">Checklist</p>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold text-[#8C9BAB] uppercase tracking-wide">Checklist</p>
+                <button onClick={() => setHelpSection('section-7')} title="Xem hướng dẫn" className="text-[#454F59] hover:text-[#0C66E4] transition-colors"><HelpCircle size={11} /></button>
+              </div>
               {addingChecklist ? (
                 <div>
                   <input
@@ -1640,13 +1837,13 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
                     <button
                       onClick={handleCreateChecklist}
                       disabled={creatingChecklist || !newChecklistTitle.trim()}
-                      className="flex-1 px-2 py-1.5 bg-[#0C66E4] hover:bg-[#0055CC] disabled:opacity-50 text-white rounded-lg text-xs transition-colors"
+                      className="flex-1 px-2 py-1.5 bg-[#0C66E4] hover:bg-[#0055CC] disabled:opacity-50 text-white rounded-full text-xs transition-colors"
                     >
                       Thêm
                     </button>
                     <button
                       onClick={() => { setAddingChecklist(false); setNewChecklistTitle('') }}
-                      className="flex-1 px-2 py-1.5 bg-[#2C333A] hover:bg-[#38424B] text-[#B6C2CF] rounded-lg text-xs transition-colors"
+                      className="flex-1 px-2 py-1.5 bg-[#2C333A] hover:bg-[#38424B] text-[#B6C2CF] rounded-full text-xs transition-colors"
                     >
                       Hủy
                     </button>
@@ -1667,7 +1864,10 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
 
             {/* Due date */}
             <div>
-              <p className="text-xs font-semibold text-[#8C9BAB] mb-2 uppercase tracking-wide">Ngày hết hạn</p>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold text-[#8C9BAB] uppercase tracking-wide">Ngày hết hạn</p>
+                <button onClick={() => setHelpSection('section-5')} title="Xem hướng dẫn" className="text-[#454F59] hover:text-[#0C66E4] transition-colors"><HelpCircle size={11} /></button>
+              </div>
               <input
                 type="date"
                 value={dueDate}
@@ -1692,7 +1892,10 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
 
             {/* Priority */}
             <div>
-              <p className="text-xs font-semibold text-[#8C9BAB] mb-2 uppercase tracking-wide">Độ ưu tiên</p>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold text-[#8C9BAB] uppercase tracking-wide">Độ ưu tiên</p>
+                <button onClick={() => setHelpSection('section-5')} title="Xem hướng dẫn" className="text-[#454F59] hover:text-[#0C66E4] transition-colors"><HelpCircle size={11} /></button>
+              </div>
               <div className="space-y-1">
                 {PRIORITY_OPTIONS.map((opt) => (
                   <button
@@ -1744,7 +1947,7 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
               <button
                 onClick={handleSaveCard}
                 disabled={saving}
-                className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-[#0C66E4] hover:bg-[#0055CC] disabled:opacity-50 text-white rounded-lg text-xs font-medium transition-colors"
+                className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-[#0C66E4] hover:bg-[#0055CC] disabled:opacity-50 text-white rounded-full text-xs font-medium transition-colors"
               >
                 {saving ? (
                   <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -1753,7 +1956,7 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
               </button>
               <button
                 onClick={handleDelete}
-                className="w-full flex items-center gap-2 px-3 py-1.5 bg-red-900/30 hover:bg-red-900/50 text-red-400 border border-red-900/50 rounded-lg text-xs transition-colors"
+                className="w-full flex items-center gap-2 px-3 py-1.5 bg-red-900/30 hover:bg-red-900/50 text-red-400 border border-red-900/50 rounded-full text-xs transition-colors"
               >
                 <Trash2 size={13} /> Xóa card
               </button>
@@ -1761,6 +1964,13 @@ export default function CardDetailModal({ card, listId, isOpen, onClose, boardMe
           </div>
         </div>
       </div>
+
+      {/* Contextual help drawer */}
+      <HelpDrawer
+        isOpen={!!helpSection}
+        onClose={() => setHelpSection(null)}
+        targetSection={helpSection}
+      />
 
       {/* Download toast */}
       {toast && (

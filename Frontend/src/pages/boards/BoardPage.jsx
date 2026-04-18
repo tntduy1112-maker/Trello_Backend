@@ -49,7 +49,7 @@ function AddListForm({ onAdd, onCancel }) {
           <div className="flex gap-2">
             <button
               type="submit"
-              className="flex-1 py-1.5 bg-[#0C66E4] hover:bg-[#0055CC] text-white rounded-lg text-xs font-medium transition-colors"
+              className="flex-1 py-1.5 bg-[#0C66E4] hover:bg-[#0055CC] text-white rounded-full text-xs font-medium transition-colors"
             >
               Thêm list
             </button>
@@ -275,12 +275,12 @@ export default function BoardPage() {
             <AvatarStack users={members} max={4} size="sm" />
             <button
               onClick={() => setInviteOpen(true)}
-              className="flex items-center gap-2 px-3 py-1.5 bg-white/15 hover:bg-white/25 text-white rounded-lg text-xs font-medium transition-colors"
+              className="flex items-center gap-2 px-3 py-1.5 bg-white/15 hover:bg-white/25 text-white rounded-full text-xs font-medium transition-colors"
             >
               <UserPlus size={13} />
               Mời
             </button>
-            <button className="flex items-center gap-2 px-3 py-1.5 bg-white/15 hover:bg-white/25 text-white rounded-lg text-xs font-medium transition-colors">
+            <button className="flex items-center gap-2 px-3 py-1.5 bg-white/15 hover:bg-white/25 text-white rounded-full text-xs font-medium transition-colors">
               <Filter size={13} />
               Lọc
             </button>

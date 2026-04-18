@@ -17,6 +17,7 @@ const {
 const { hashPassword, comparePassword } = require('../../utils/bcrypt');
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../../utils/jwt');
 const { sendVerificationEmail, sendPasswordResetEmail } = require('../../utils/email');
+const { uploadFile, deleteFile, getPublicUrl } = require('../../utils/storage');
 
 const generateOTP = () => String(Math.floor(100000 + Math.random() * 900000));
 
@@ -248,6 +249,41 @@ const resetPassword = async (token, newPassword) => {
   await invalidateAllUserTokens(record.user_id); // invalidate any in-flight access tokens
 };
 
+const updateProfile = async (userId, { full_name, avatarFile }) => {
+  const user = await findUserById(userId);
+  if (!user) {
+    const err = new Error('User not found');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const fields = {};
+  if (full_name !== undefined) fields.full_name = full_name;
+
+  if (avatarFile) {
+    const objectName = await uploadFile({
+      buffer: avatarFile.buffer,
+      mimetype: avatarFile.mimetype,
+      folder: 'avatars',
+      filename: avatarFile.originalname,
+    });
+    // Delete old avatar from MinIO if it was stored there
+    if (user.avatar_url) {
+      const match = user.avatar_url.match(/\/avatars\/.+$/);
+      if (match) {
+        const oldObjectName = match[0].slice(1); // strip leading /
+        deleteFile(oldObjectName).catch(() => {});
+      }
+    }
+    fields.avatar_url = getPublicUrl(objectName);
+  }
+
+  if (Object.keys(fields).length === 0) return user;
+
+  const updated = await updateUser(userId, fields);
+  return updated;
+};
+
 module.exports = {
   register,
   verifyEmail,
@@ -258,4 +294,5 @@ module.exports = {
   logoutAll,
   forgotPassword,
   resetPassword,
+  updateProfile,
 };

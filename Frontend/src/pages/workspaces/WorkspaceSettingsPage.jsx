@@ -205,7 +205,7 @@ export default function WorkspaceSettingsPage() {
                 <button
                   type="submit"
                   disabled={saving}
-                  className="flex items-center gap-2 px-4 py-2 bg-[#0C66E4] hover:bg-[#0055CC] text-white rounded-lg text-sm font-medium transition-colors"
+                  className="flex items-center gap-2 px-4 py-2 bg-[#0C66E4] hover:bg-[#0055CC] text-white rounded-full text-sm font-medium transition-colors"
                 >
                   {saving ? (
                     <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -222,7 +222,7 @@ export default function WorkspaceSettingsPage() {
               <button
                 onClick={handleDelete}
                 disabled={deleting}
-                className="flex items-center gap-2 px-4 py-2 bg-red-900/30 hover:bg-red-900/50 text-red-400 border border-red-900/50 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+                className="flex items-center gap-2 px-4 py-2 bg-red-900/30 hover:bg-red-900/50 text-red-400 border border-red-900/50 rounded-full text-sm font-medium transition-colors disabled:opacity-50"
               >
                 <Trash2 size={14} />
                 {deleting ? 'Đang xóa...' : 'Xóa workspace'}
@@ -238,7 +238,7 @@ export default function WorkspaceSettingsPage() {
               <h2 className="text-base font-semibold text-white">Thành viên ({members.length})</h2>
               <button
                 onClick={() => { setShowInviteForm((v) => !v); setInviteError(''); setInviteSuccess('') }}
-                className="flex items-center gap-2 px-3 py-1.5 bg-[#0C66E4] hover:bg-[#0055CC] text-white rounded-lg text-sm font-medium transition-colors"
+                className="flex items-center gap-2 px-3 py-1.5 bg-[#0C66E4] hover:bg-[#0055CC] text-white rounded-full text-sm font-medium transition-colors"
               >
                 {showInviteForm ? <X size={14} /> : <UserPlus size={14} />}
                 {showInviteForm ? 'Đóng' : 'Thêm thành viên'}
@@ -281,7 +281,7 @@ export default function WorkspaceSettingsPage() {
                   <button
                     type="submit"
                     disabled={inviting}
-                    className="flex items-center gap-2 px-4 py-2 bg-[#0C66E4] hover:bg-[#0055CC] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors whitespace-nowrap"
+                    className="flex items-center gap-2 px-4 py-2 bg-[#0C66E4] hover:bg-[#0055CC] disabled:opacity-50 text-white rounded-full text-sm font-medium transition-colors whitespace-nowrap"
                   >
                     {inviting ? (
                       <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />

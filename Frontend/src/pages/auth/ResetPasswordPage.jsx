@@ -110,7 +110,7 @@ export default function ResetPasswordPage() {
         <button
           type="submit"
           disabled={loading || !token}
-          className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-lg font-semibold text-sm transition-colors flex items-center justify-center gap-2"
+          className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-full font-semibold text-sm transition-colors flex items-center justify-center gap-2"
         >
           {loading ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : 'Đặt lại mật khẩu'}
         </button>

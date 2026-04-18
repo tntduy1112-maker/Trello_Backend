@@ -453,6 +453,8 @@ const initialState = {
   cardActivity: [],
   openCardId: null,
   dndError: null,
+  streamPaused: false,
+  streamReconnectedAt: null,
   loadingBoard: false,
   loadingLists: false,
   loadingComments: false,
@@ -554,6 +556,10 @@ const boardSlice = createSlice({
     },
     clearDndError: (state) => {
       state.dndError = null
+    },
+    setStreamPaused: (state, action) => {
+      state.streamPaused = action.payload
+      if (!action.payload) state.streamReconnectedAt = Date.now()
     },
     injectCardActivity: (state, action) => {
       const event = action.payload
@@ -830,6 +836,6 @@ export const {
   setBoards, setCurrentBoard, setLists, setCards, clearBoard,
   moveCard, moveCardBetweenLists, moveList, addCard, updateCard, deleteCard,
   addList, updateList, deleteList,
-  setOpenCardId, injectCardActivity, clearDndError,
+  setOpenCardId, injectCardActivity, clearDndError, setStreamPaused,
 } = boardSlice.actions
 export default boardSlice.reducer

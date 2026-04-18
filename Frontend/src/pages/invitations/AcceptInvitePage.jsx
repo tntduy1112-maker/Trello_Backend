@@ -134,14 +134,14 @@ export default function AcceptInvitePage() {
               <div className="space-y-2">
                 <Link
                   to="/login"
-                  className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#0C66E4] hover:bg-[#0055CC] text-white rounded-lg text-sm font-medium transition-colors"
+                  className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#0C66E4] hover:bg-[#0055CC] text-white rounded-full text-sm font-medium transition-colors"
                 >
                   <LogIn size={15} />
                   Đăng nhập để tham gia
                 </Link>
                 <Link
                   to={`/register?email=${encodeURIComponent(preview.email)}`}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#2C333A] hover:bg-[#38424B] text-[#B6C2CF] rounded-lg text-sm font-medium transition-colors"
+                  className="w-full flex items-center justify-center gap-2 py-2.5 bg-[#2C333A] hover:bg-[#38424B] text-[#B6C2CF] rounded-full text-sm font-medium transition-colors"
                 >
                   <UserPlus size={15} />
                   Tạo tài khoản mới

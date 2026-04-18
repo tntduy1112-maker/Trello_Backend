@@ -14,6 +14,7 @@ const findByCardId = async (cardId) => {
            'content',      ci.content,
            'is_completed', ci.is_completed,
            'position',     ci.position,
+           'assigned_to',  ci.assigned_to,
            'due_date',     ci.due_date,
            'completed_at', ci.completed_at,
            'created_at',   ci.created_at

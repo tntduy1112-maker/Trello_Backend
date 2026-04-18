@@ -1,9 +1,19 @@
 const router = require('express').Router();
 const Joi = require('joi');
+const multer = require('multer');
 const rateLimit = require('express-rate-limit');
 const controller = require('./auth.controller');
 const validate = require('../../middlewares/validate');
 const authenticate = require('../../middlewares/authenticate');
+
+const avatarUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 }, // 2 MB
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) cb(null, true);
+    else cb(new Error('Only image files are allowed'));
+  },
+});
 
 // Max 5 requests per 15 minutes per IP on password-reset routes
 const passwordResetLimiter = rateLimit({
@@ -30,6 +40,7 @@ router.post('/login', validate(loginSchema), controller.login);
 router.post('/refresh', controller.refreshToken);
 router.post('/logout', controller.logout);
 router.get('/me', authenticate, controller.getMe);
+router.put('/me', authenticate, avatarUpload.single('avatar'), controller.updateMe);
 
 router.post('/verify-email', controller.verifyEmail);
 router.post('/resend-verification', controller.resendVerification);
