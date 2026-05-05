@@ -1,0 +1,14 @@
+bin/
+tmp/
+coverage.out
+coverage.html
+*.out
+*.exe
+*.dll
+*.so
+*.dylib
+.env
+.env.local
+.DS_Store
+go.work
+go.work.sum
