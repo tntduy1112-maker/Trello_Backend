@@ -116,6 +116,7 @@ func main() {
 		JWTManager:       jwtManager,
 		EmailService:     emailService,
 		Cache:            redisClient,
+		Storage:          storageService,
 		FrontendURL:      frontendURL,
 	})
 
@@ -269,6 +270,16 @@ func main() {
 			auth.PUT("/me",
 				middleware.Auth(jwtManager, authService),
 				authHandler.UpdateMe,
+			)
+
+			auth.POST("/me/avatar",
+				middleware.Auth(jwtManager, authService),
+				authHandler.UploadAvatar,
+			)
+
+			auth.POST("/me/password",
+				middleware.Auth(jwtManager, authService),
+				authHandler.ChangePassword,
 			)
 		}
 

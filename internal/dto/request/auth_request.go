@@ -33,6 +33,11 @@ type UpdateProfileRequest struct {
 	FullName string `json:"full_name" binding:"omitempty,min=2,max=255"`
 }
 
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password" binding:"required"`
+	NewPassword     string `json:"new_password" binding:"required,min=8,max=128"`
+}
+
 type RefreshTokenRequest struct {
 	RefreshToken string `json:"refresh_token"`
 }

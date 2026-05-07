@@ -13,6 +13,8 @@ import (
 	"github.com/codewebkhongkho/trello-agent/pkg/apperror"
 )
 
+const maxAvatarSize = 2 << 20 // 2MB
+
 type AuthHandler struct {
 	authService *service.AuthService
 }
@@ -256,4 +258,62 @@ func (h *AuthHandler) UpdateMe(c *gin.Context) {
 	}
 
 	response.Success(c, http.StatusOK, user)
+}
+
+func (h *AuthHandler) UploadAvatar(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == "" {
+		response.ErrorResponse(c, apperror.ErrUnauthorized)
+		return
+	}
+
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxAvatarSize)
+	file, header, err := c.Request.FormFile("avatar")
+	if err != nil {
+		response.ErrorResponse(c, apperror.New("INVALID_FILE", "Avatar file is required (max 2MB)", 400))
+		return
+	}
+	defer file.Close()
+
+	contentType := header.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "image/jpeg"
+	}
+
+	user, err := h.authService.UploadAvatar(c.Request.Context(), userID, file, header.Size, contentType)
+	if err != nil {
+		if appErr, ok := err.(*apperror.AppError); ok {
+			response.ErrorResponse(c, appErr)
+			return
+		}
+		_ = c.Error(err)
+		return
+	}
+
+	response.Success(c, http.StatusOK, user)
+}
+
+func (h *AuthHandler) ChangePassword(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == "" {
+		response.ErrorResponse(c, apperror.ErrUnauthorized)
+		return
+	}
+
+	var req request.ChangePasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		_ = c.Error(err)
+		return
+	}
+
+	if err := h.authService.ChangePassword(c.Request.Context(), userID, &req); err != nil {
+		if appErr, ok := err.(*apperror.AppError); ok {
+			response.ErrorResponse(c, appErr)
+			return
+		}
+		_ = c.Error(err)
+		return
+	}
+
+	response.Success(c, http.StatusOK, gin.H{"message": "Password changed successfully"})
 }

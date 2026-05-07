@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"time"
 
 	"github.com/codewebkhongkho/trello-agent/internal/domain"
@@ -13,6 +15,7 @@ import (
 	"github.com/codewebkhongkho/trello-agent/pkg/email"
 	"github.com/codewebkhongkho/trello-agent/pkg/hash"
 	"github.com/codewebkhongkho/trello-agent/pkg/jwt"
+	"github.com/codewebkhongkho/trello-agent/pkg/storage"
 )
 
 const (
@@ -28,6 +31,7 @@ type AuthService struct {
 	jwtManager       *jwt.Manager
 	emailService     *email.Service
 	cache            *cache.RedisClient
+	storage          storage.StorageService
 	frontendURL      string
 }
 
@@ -38,6 +42,7 @@ type AuthServiceConfig struct {
 	JWTManager       *jwt.Manager
 	EmailService     *email.Service
 	Cache            *cache.RedisClient
+	Storage          storage.StorageService
 	FrontendURL      string
 }
 
@@ -49,6 +54,7 @@ func NewAuthService(cfg AuthServiceConfig) *AuthService {
 		jwtManager:       cfg.JWTManager,
 		emailService:     cfg.EmailService,
 		cache:            cfg.Cache,
+		storage:          cfg.Storage,
 		frontendURL:      cfg.FrontendURL,
 	}
 }
@@ -332,6 +338,55 @@ func (s *AuthService) UpdateProfile(ctx context.Context, userID string, req *req
 	}
 
 	return response.ToUserResponse(user), nil
+}
+
+func (s *AuthService) UploadAvatar(ctx context.Context, userID string, reader io.Reader, size int64, contentType string) (*response.UserResponse, error) {
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return nil, apperror.Wrap(err, apperror.ErrInternal)
+	}
+	if user == nil {
+		return nil, apperror.ErrUserNotFound
+	}
+
+	objectKey := fmt.Sprintf("avatars/%s", userID)
+	url, err := s.storage.Upload(ctx, objectKey, reader, size, contentType)
+	if err != nil {
+		return nil, apperror.Wrap(err, apperror.ErrInternal)
+	}
+
+	user.AvatarURL = &url
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		return nil, apperror.Wrap(err, apperror.ErrInternal)
+	}
+
+	return response.ToUserResponse(user), nil
+}
+
+func (s *AuthService) ChangePassword(ctx context.Context, userID string, req *request.ChangePasswordRequest) error {
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return apperror.Wrap(err, apperror.ErrInternal)
+	}
+	if user == nil {
+		return apperror.ErrUserNotFound
+	}
+
+	if !hash.ComparePassword(user.PasswordHash, req.CurrentPassword) {
+		return apperror.New("INVALID_PASSWORD", "Current password is incorrect", 400)
+	}
+
+	newHash, err := hash.HashPassword(req.NewPassword)
+	if err != nil {
+		return apperror.Wrap(err, apperror.ErrInternal)
+	}
+
+	user.PasswordHash = newHash
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		return apperror.Wrap(err, apperror.ErrInternal)
+	}
+
+	return nil
 }
 
 func (s *AuthService) IsTokenBlacklisted(ctx context.Context, jti string) (bool, error) {
