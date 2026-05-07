@@ -62,6 +62,13 @@ func Auth(jwtManager *jwt.Manager, authService *service.AuthService) gin.Handler
 			return
 		}
 
+		isRevoked, _ := authService.IsTokenRevoked(c.Request.Context(), claims.UserID, claims.IssuedAt.Time)
+		if isRevoked {
+			response.ErrorResponse(c, apperror.ErrTokenRevoked)
+			c.Abort()
+			return
+		}
+
 		c.Set(UserIDKey, claims.UserID)
 		c.Set(UserEmailKey, claims.Email)
 		c.Set(JTIKey, claims.ID)

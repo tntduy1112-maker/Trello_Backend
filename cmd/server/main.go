@@ -432,6 +432,16 @@ func main() {
 	}
 
 	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := tokenRepo.DeleteExpiredTokens(context.Background()); err != nil {
+				log.Error().Err(err).Msg("Failed to delete expired tokens")
+			}
+		}
+	}()
+
+	go func() {
 		log.Info().Str("port", cfg.App.Port).Msg("Server starting")
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal().Err(err).Msg("Server failed to start")

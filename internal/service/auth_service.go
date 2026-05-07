@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
 	"time"
 
 	"github.com/codewebkhongkho/trello-agent/internal/domain"
@@ -189,6 +190,7 @@ func (s *AuthService) RefreshToken(ctx context.Context, refreshToken, deviceInfo
 	if storedToken.IsRevoked {
 		_ = s.tokenRepo.RevokeAllUserTokens(ctx, storedToken.UserID)
 		_ = s.userRepo.UpdateTokensValidAfter(ctx, storedToken.UserID)
+		s.cacheRevocation(ctx, storedToken.UserID)
 		return nil, apperror.ErrTokenRevoked
 	}
 
@@ -237,6 +239,7 @@ func (s *AuthService) LogoutAll(ctx context.Context, userID string) error {
 	if err := s.userRepo.UpdateTokensValidAfter(ctx, userID); err != nil {
 		return apperror.Wrap(err, apperror.ErrInternal)
 	}
+	s.cacheRevocation(ctx, userID)
 	return nil
 }
 
@@ -305,6 +308,7 @@ func (s *AuthService) ResetPassword(ctx context.Context, req *request.ResetPassw
 
 	_ = s.tokenRepo.RevokeAllUserTokens(ctx, user.ID)
 	_ = s.userRepo.UpdateTokensValidAfter(ctx, user.ID)
+	s.cacheRevocation(ctx, user.ID)
 
 	return nil
 }
@@ -386,11 +390,35 @@ func (s *AuthService) ChangePassword(ctx context.Context, userID string, req *re
 		return apperror.Wrap(err, apperror.ErrInternal)
 	}
 
+	_ = s.tokenRepo.RevokeAllUserTokens(ctx, userID)
+	_ = s.userRepo.UpdateTokensValidAfter(ctx, userID)
+	s.cacheRevocation(ctx, userID)
+
 	return nil
 }
 
 func (s *AuthService) IsTokenBlacklisted(ctx context.Context, jti string) (bool, error) {
 	return s.cache.Exists(ctx, "blacklist:"+jti)
+}
+
+// cacheRevocation stores the current time as the revocation threshold for a user.
+// Access tokens issued before this time will be rejected for up to 20 minutes.
+func (s *AuthService) cacheRevocation(ctx context.Context, userID string) {
+	_ = s.cache.Set(ctx, "tva:"+userID, time.Now().Unix(), 20*time.Minute)
+}
+
+// IsTokenRevoked returns true if the token was issued before the user's last revocation event.
+// Returns false on cache miss (no recent revocation = token is valid).
+func (s *AuthService) IsTokenRevoked(ctx context.Context, userID string, issuedAt time.Time) (bool, error) {
+	val, err := s.cache.Get(ctx, "tva:"+userID)
+	if err != nil {
+		return false, nil
+	}
+	revokedAt, err := strconv.ParseInt(val, 10, 64)
+	if err != nil {
+		return false, nil
+	}
+	return issuedAt.Before(time.Unix(revokedAt, 0)), nil
 }
 
 func (s *AuthService) sendVerificationOTP(ctx context.Context, user *domain.User) error {
