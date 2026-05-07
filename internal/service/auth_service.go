@@ -404,7 +404,9 @@ func (s *AuthService) IsTokenBlacklisted(ctx context.Context, jti string) (bool,
 // cacheRevocation stores the current time as the revocation threshold for a user.
 // Access tokens issued before this time will be rejected for up to 20 minutes.
 func (s *AuthService) cacheRevocation(ctx context.Context, userID string) {
-	_ = s.cache.Set(ctx, "tva:"+userID, time.Now().Unix(), 20*time.Minute)
+	// +1 ensures tokens issued in the same second as the revocation are also rejected.
+	// IsTokenRevoked uses strict Before(<), so tva=S+1 catches all tokens with iat<=S.
+	_ = s.cache.Set(ctx, "tva:"+userID, time.Now().Unix()+1, 20*time.Minute)
 }
 
 // IsTokenRevoked returns true if the token was issued before the user's last revocation event.
