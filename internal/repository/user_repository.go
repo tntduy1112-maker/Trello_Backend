@@ -110,7 +110,7 @@ func (r *userRepository) Update(ctx context.Context, user *domain.User) error {
 	user.UpdatedAt = time.Now()
 	query := `
 		UPDATE users
-		SET email = $2, full_name = $3, avatar_url = $4, is_verified = $5, is_active = $6, updated_at = $7
+		SET email = $2, full_name = $3, avatar_url = $4, is_verified = $5, is_active = $6, password_hash = $7, updated_at = $8
 		WHERE id = $1 AND deleted_at IS NULL
 	`
 	_, err := r.db.Exec(ctx, query,
@@ -120,6 +120,7 @@ func (r *userRepository) Update(ctx context.Context, user *domain.User) error {
 		user.AvatarURL,
 		user.IsVerified,
 		user.IsActive,
+		user.PasswordHash,
 		user.UpdatedAt,
 	)
 	return err
