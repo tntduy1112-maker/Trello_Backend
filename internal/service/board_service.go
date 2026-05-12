@@ -342,7 +342,7 @@ func (s *BoardService) Invite(ctx context.Context, userID, boardID string, req *
 
 	existingInv, _ := s.invRepo.FindByBoardAndEmail(ctx, boardID, req.Email)
 	if existingInv != nil && existingInv.IsPending() {
-		return nil, apperror.New("INVITATION_EXISTS", "Pending invitation already exists", 409)
+		_ = s.invRepo.Delete(ctx, existingInv.ID)
 	}
 
 	token := generateInviteToken()
