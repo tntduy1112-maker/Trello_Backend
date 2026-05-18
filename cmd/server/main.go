@@ -145,6 +145,11 @@ func main() {
 	attachmentService := service.NewAttachmentService(attachmentRepo, cardRepo, boardRepo, activityRepo, storageService)
 	invitationService := service.NewInvitationService(invRepo, boardRepo, userRepo, orgRepo, jwtManager)
 
+	adminRepo := repository.NewAdminRepository(db)
+	contentRepo := repository.NewContentRepository(db)
+	surveyRepo := repository.NewSurveyRepository(db)
+	adminHandler := handler.NewAdminHandler(adminRepo, contentRepo, surveyRepo)
+
 	authHandler := handler.NewAuthHandler(authService)
 	orgHandler := handler.NewOrganizationHandler(orgService)
 	boardHandler := handler.NewBoardHandler(boardService)
@@ -420,6 +425,25 @@ func main() {
 				notifications.POST("/read-all", notificationHandler.MarkAllAsRead)
 				notifications.DELETE("/:id", notificationHandler.Delete)
 			}
+		}
+
+		// Public content endpoints
+		api.GET("/content/:type", adminHandler.GetContent)
+		api.GET("/content/:type/list", adminHandler.ListContent)
+
+		// Public survey submission
+		api.POST("/survey", adminHandler.SubmitSurvey)
+
+		// Admin-only endpoints
+		adminGroup := api.Group("/admin")
+		adminGroup.Use(middleware.Auth(jwtManager, authService))
+		adminGroup.Use(middleware.AdminOnly())
+		{
+			adminGroup.GET("/me", adminHandler.Me)
+			adminGroup.GET("/users", adminHandler.ListUsers)
+			adminGroup.GET("/workspaces", adminHandler.ListWorkspaces)
+			adminGroup.GET("/submissions", adminHandler.ListSubmissions)
+			adminGroup.PUT("/content/:type", adminHandler.UpsertContent)
 		}
 	}
 
